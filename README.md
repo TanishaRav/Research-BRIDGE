@@ -30,6 +30,15 @@ http://localhost:8000
 
 To use a different port, set `SPARK_PORT` (for example `SPARK_PORT=9000 python -m app.server`).
 
+### Cookie-signing secret
+
+Signed session cookies are keyed by `SPARK_SECRET_KEY`. Set it in any real
+deployment so sessions survive restarts. When it is unset, the app generates a
+random per-process secret at startup rather than using a fixed fallback, so a
+forgotten env var cannot leave cookies signed with a publicly known key. The
+only cost is that existing cookies are invalidated on restart, which is fine
+for the zero-config demo run above.
+
 `seed.py` recreates `spark.db` from scratch on every run, so it is safe to
 re-run whenever you want a clean demo state. `spark.db` is generated and is
 not checked in.

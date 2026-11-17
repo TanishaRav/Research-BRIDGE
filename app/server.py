@@ -39,9 +39,14 @@ from matching import engine as match_engine
 # Configuration / secrets
 # ---------------------------------------------------------------------------
 
-# Cookie-signing key. In production this must come from the environment; for
-# the demo we fall back to a stable dev key so restarts keep sessions valid.
-SECRET_KEY = os.environ.get("SPARK_SECRET_KEY", "spark-dev-secret-change-me").encode()
+# Cookie-signing key. In production set SPARK_SECRET_KEY so cookies stay valid
+# across restarts. When it is unset we generate a random per-process secret
+# instead of a fixed literal, so a forgotten env var can never leave the app
+# running with a publicly known (forgeable) key. Trade-off: existing signed
+# cookies are invalidated on every restart, which is fine for the demo and
+# keeps `python -m app.server` / `python seed.py` working with zero config.
+_env_secret = os.environ.get("SPARK_SECRET_KEY")
+SECRET_KEY = (_env_secret.encode() if _env_secret else secrets.token_hex(32).encode())
 COOKIE_NAME = "spark_session"
 PBKDF2_ITERATIONS = 240_000
 VALID_ROLES = ("admin", "manager", "faculty", "student")
@@ -252,7 +257,10 @@ def dashboard(ctx):
         return html_response(templates.layout("Welcome", templates.page("Welcome to SPARK", inner), ctx.user))
 
     role = ctx.user["role"]
-    sessions = db.list_sessions(ctx.conn)
+    # Scope the dashboard list to what the viewer may see (R2.8), matching the
+    # /sessions index; db.list_sessions (all rows) would leak draft/other-owner
+    # session names and statuses onto the landing page.
+    sessions = db.list_sessions_for_user(ctx.conn, ctx.user)
     rows = "".join(
         '<li><a href="/sessions/%d">%s</a> <span class="pill">%s</span></li>'
         % (s["id"], templates.esc(s["name"]), templates.esc(s["status"]))
