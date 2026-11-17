@@ -1,5 +1,7 @@
 # ResearchBridge
 
+**Research BRIDGE: Building Research Integration, Discovery, Guidance & Engagement · Team 7**
+
 ResearchBridge is an independent prototype for transparent, cohort-wide undergraduate research placement. It is not an official Iowa State University service, an approved integration, or a production system.
 
 Every student in the repository is synthetic. Every faculty identity is fictional. Every project opening is hypothetical. The in-app role switcher selects seeded personas; it is not authentication. ResearchBridge does not send email and does not call Workday or another university system.
