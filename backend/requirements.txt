@@ -1,0 +1,10 @@
+fastapi==0.163.1
+httpx==0.28.1
+hypothesis==6.170.15
+ortools==9.15.6755
+pydantic==2.14.3
+pydantic-settings==2.16.3
+pytest==9.2.0
+python-multipart==0.0.34
+SQLAlchemy==2.1.9
+uvicorn[standard]==0.54.0

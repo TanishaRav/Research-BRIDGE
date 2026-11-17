@@ -155,3 +155,15 @@ vite.config.ts.timestamp-*
 .nx/cache
 .nx/workspace-data
 .nx/migrate-runs
+
+# ResearchBridge local development
+.DS_Store
+.venv/
+backend/data/*.db
+backend/data/*.db-*
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+playwright-report/
+test-results/

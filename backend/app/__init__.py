@@ -1,0 +1,1 @@
+"""ResearchBridge API application."""

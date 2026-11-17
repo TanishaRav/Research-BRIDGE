@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "generated_with_seed": 731,
+  "synthetic_only": true,
+  "independent_prototype": true,
+  "sources": [
+    {
+      "id": "eureca-public-purpose",
+      "url": "https://www.undergradresearch.iastate.edu/",
+      "retrieved_at": "2026-11-17",
+      "used_for": "High-level program context only; no faculty identity or opening was copied."
+    },
+    {
+      "id": "researchbridge-synthetic-generator",
+      "url": null,
+      "retrieved_at": "2026-11-17",
+      "used_for": "All students, faculty identities, project titles, capacity, schedules, prerequisites, and availability."
+    }
+  ],
+  "notice": "Every student is synthetic. Every faculty identity is fictional. Every project opening is hypothetical. This is not an official Iowa State service or approved integration."
+}

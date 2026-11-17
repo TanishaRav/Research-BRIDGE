@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "description": "Small synthetic adversarial cases exercised by the generator and tests.",
+  "cases": [
+    {"id":"duplicate-display-name","student_ids":["student-syn-005","student-syn-006"],"expected":"stable IDs remain distinct"},
+    {"id":"missing-hours","student_ids":["student-syn-013"],"expected":"mandatory availability evidence remains unresolved"},
+    {"id":"missing-windows","student_ids":["student-syn-014"],"expected":"fixed-window evidence remains unresolved"},
+    {"id":"no-feasible-match","student_ids":["student-syn-015"],"project_ids":["project-hyp-020"],"expected":"zero-capacity project is ineligible"},
+    {"id":"schedule-conflict","student_ids":["student-syn-012"],"expected":"fixed required window conflict"},
+    {"id":"score-tie","student_ids":["student-syn-010","student-syn-011"],"expected":"seeded digest, never names, resolves ambiguity"},
+    {"id":"oversubscribed","project_ids":["project-hyp-001"],"expected":"capacity is respected under cohort-wide allocation"},
+    {"id":"counterexample","edges":[["A","P1",95],["A","P2",90],["B","P1",94]],"expected":"global places two; greedy places one"}
+  ]
+}

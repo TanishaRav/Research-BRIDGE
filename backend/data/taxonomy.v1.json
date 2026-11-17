@@ -1,0 +1,25 @@
+{
+  "schema_version": "1.0",
+  "taxonomy_version": "rb-taxonomy-v1",
+  "description": "Deterministic offline taxonomy for synthetic ResearchBridge matching.",
+  "skills": [
+    {"id":"python","label":"Python","category":"computing","aliases":["py"]},
+    {"id":"r","label":"R","category":"computing","aliases":["r language"]},
+    {"id":"statistics","label":"Statistics","category":"analysis","aliases":["statistical analysis","stats"]},
+    {"id":"machine-learning","label":"Machine Learning","category":"analysis","aliases":["ml"]},
+    {"id":"data-visualization","label":"Data Visualization","category":"communication","aliases":["visualization","data viz"]},
+    {"id":"gis","label":"Geographic Information Systems","category":"analysis","aliases":["geospatial","mapping"]},
+    {"id":"laboratory","label":"Laboratory Methods","category":"laboratory","aliases":["lab methods","wet lab"]},
+    {"id":"literature-review","label":"Literature Review","category":"research","aliases":["literature search"]},
+    {"id":"interviewing","label":"Interviewing","category":"qualitative","aliases":["research interviews"]},
+    {"id":"qualitative-analysis","label":"Qualitative Analysis","category":"qualitative","aliases":["coding interviews"]},
+    {"id":"cad","label":"Computer-Aided Design","category":"engineering","aliases":["computer aided design","3d design"]},
+    {"id":"electronics","label":"Electronics","category":"engineering","aliases":["circuits","sensors"]},
+    {"id":"ecology","label":"Ecology","category":"science","aliases":["ecosystems","environment"]},
+    {"id":"bioinformatics","label":"Bioinformatics","category":"analysis","aliases":["computational biology"]},
+    {"id":"writing","label":"Research Writing","category":"communication","aliases":["technical writing","academic writing"]},
+    {"id":"web-development","label":"Web Development","category":"computing","aliases":["web apps","frontend"]},
+    {"id":"database","label":"Database Methods","category":"computing","aliases":["sql","data management"]},
+    {"id":"ethics","label":"Research Ethics","category":"research","aliases":["responsible conduct"]}
+  ]
+}

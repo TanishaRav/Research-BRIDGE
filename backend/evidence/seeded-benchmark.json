@@ -1,0 +1,822 @@
+{
+  "benchmark": {
+    "counterexample": {
+      "description": "A has P1=95 and P2=90; B has only P1=94. Greedy selects A\u2192P1, while count-first global allocation places both.",
+      "global_assignments": [
+        [
+          "counter-a",
+          "counter-p2"
+        ],
+        [
+          "counter-b",
+          "counter-p1"
+        ]
+      ],
+      "global_placement_count": 2,
+      "global_proven_optimal": true,
+      "greedy_assignments": [
+        [
+          "counter-a",
+          "counter-p1"
+        ]
+      ],
+      "greedy_placement_count": 1
+    },
+    "limitation": "Synthetic evaluation cannot establish actual rematching reduction or demographic fairness. A pilot must measure acceptance, withdrawal, rematching rounds, and time-to-placement.",
+    "strategies": {
+      "fcfs": {
+        "bottom_decile_score": "83.64",
+        "constraint_violations": {
+          "capacity": 0,
+          "duplicate_student": 0,
+          "eligibility_or_threshold": 0,
+          "total": 0
+        },
+        "eligible_count": 47,
+        "first_time_denominator": 40,
+        "first_time_placed": 21,
+        "first_time_placement_rate": "0.5250",
+        "label": "First-come-first-served synthetic simulation",
+        "major_rates": {
+          "Biology": {
+            "denominator": 8,
+            "placed": 4,
+            "rate": "0.5000",
+            "small_group_warning": false
+          },
+          "Computer Science": {
+            "denominator": 8,
+            "placed": 4,
+            "rate": "0.5000",
+            "small_group_warning": false
+          },
+          "Design": {
+            "denominator": 7,
+            "placed": 3,
+            "rate": "0.4286",
+            "small_group_warning": false
+          },
+          "English": {
+            "denominator": 7,
+            "placed": 4,
+            "rate": "0.5714",
+            "small_group_warning": false
+          },
+          "Environmental Science": {
+            "denominator": 7,
+            "placed": 3,
+            "rate": "0.4286",
+            "small_group_warning": false
+          },
+          "Mechanical Engineering": {
+            "denominator": 8,
+            "placed": 4,
+            "rate": "0.5000",
+            "small_group_warning": false
+          },
+          "Sociology": {
+            "denominator": 7,
+            "placed": 2,
+            "rate": "0.2857",
+            "small_group_warning": false
+          },
+          "Statistics": {
+            "denominator": 8,
+            "placed": 3,
+            "rate": "0.3750",
+            "small_group_warning": false
+          }
+        },
+        "mean_score": "87.96",
+        "median_score": "87.64",
+        "minimum_score": "82.64",
+        "placement_count": 27,
+        "placement_rate_eligible": "0.5745",
+        "placement_rate_submitted": "0.4500",
+        "runtime_ms": "0.103",
+        "strategy": "fcfs",
+        "submitted_count": 60,
+        "top_choice_count": 27,
+        "top_choice_denominator": 27,
+        "top_choice_rate": "1.0000",
+        "unplaced_count": 33,
+        "unplaced_reasons": {
+          "student-syn-001": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-002": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-003": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-004": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-005": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-006": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-007": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-008": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-009": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-010": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-012": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-013": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-014": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-015": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-016": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-017": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-018": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-019": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-030": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-037": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-039": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-042": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-045": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-051": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-052": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-053": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-054": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-055": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-056": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-057": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-058": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-059": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-060": [
+            "missing_data",
+            "no_eligible_projects"
+          ]
+        }
+      },
+      "global": {
+        "bottom_decile_score": "83.64",
+        "constraint_violations": {
+          "capacity": 0,
+          "duplicate_student": 0,
+          "eligibility_or_threshold": 0,
+          "total": 0
+        },
+        "eligible_count": 47,
+        "first_time_denominator": 40,
+        "first_time_placed": 20,
+        "first_time_placement_rate": "0.5000",
+        "label": "Cohort-wide lexicographic allocation",
+        "major_rates": {
+          "Biology": {
+            "denominator": 8,
+            "placed": 5,
+            "rate": "0.6250",
+            "small_group_warning": false
+          },
+          "Computer Science": {
+            "denominator": 8,
+            "placed": 4,
+            "rate": "0.5000",
+            "small_group_warning": false
+          },
+          "Design": {
+            "denominator": 7,
+            "placed": 4,
+            "rate": "0.5714",
+            "small_group_warning": false
+          },
+          "English": {
+            "denominator": 7,
+            "placed": 3,
+            "rate": "0.4286",
+            "small_group_warning": false
+          },
+          "Environmental Science": {
+            "denominator": 7,
+            "placed": 4,
+            "rate": "0.5714",
+            "small_group_warning": false
+          },
+          "Mechanical Engineering": {
+            "denominator": 8,
+            "placed": 3,
+            "rate": "0.3750",
+            "small_group_warning": false
+          },
+          "Sociology": {
+            "denominator": 7,
+            "placed": 1,
+            "rate": "0.1429",
+            "small_group_warning": false
+          },
+          "Statistics": {
+            "denominator": 8,
+            "placed": 3,
+            "rate": "0.3750",
+            "small_group_warning": false
+          }
+        },
+        "mean_score": "88.37",
+        "median_score": "89.59",
+        "minimum_score": "82.64",
+        "placement_count": 27,
+        "placement_rate_eligible": "0.5745",
+        "placement_rate_submitted": "0.4500",
+        "runtime_ms": "55.260",
+        "strategy": "global",
+        "submitted_count": 60,
+        "top_choice_count": 27,
+        "top_choice_denominator": 27,
+        "top_choice_rate": "1.0000",
+        "unplaced_count": 33,
+        "unplaced_reasons": {
+          "student-syn-001": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-002": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-004": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-005": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-006": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-007": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-008": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-009": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-010": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-011": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-012": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-013": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-014": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-015": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-016": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-017": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-018": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-020": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-021": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-037": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-042": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-045": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-048": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-051": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-052": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-053": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-054": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-055": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-056": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-057": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-058": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-059": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-060": [
+            "missing_data",
+            "no_eligible_projects"
+          ]
+        }
+      },
+      "greedy": {
+        "bottom_decile_score": "83.64",
+        "constraint_violations": {
+          "capacity": 0,
+          "duplicate_student": 0,
+          "eligibility_or_threshold": 0,
+          "total": 0
+        },
+        "eligible_count": 47,
+        "first_time_denominator": 40,
+        "first_time_placed": 20,
+        "first_time_placement_rate": "0.5000",
+        "label": "Greedy highest-score allocation",
+        "major_rates": {
+          "Biology": {
+            "denominator": 8,
+            "placed": 5,
+            "rate": "0.6250",
+            "small_group_warning": false
+          },
+          "Computer Science": {
+            "denominator": 8,
+            "placed": 4,
+            "rate": "0.5000",
+            "small_group_warning": false
+          },
+          "Design": {
+            "denominator": 7,
+            "placed": 4,
+            "rate": "0.5714",
+            "small_group_warning": false
+          },
+          "English": {
+            "denominator": 7,
+            "placed": 3,
+            "rate": "0.4286",
+            "small_group_warning": false
+          },
+          "Environmental Science": {
+            "denominator": 7,
+            "placed": 4,
+            "rate": "0.5714",
+            "small_group_warning": false
+          },
+          "Mechanical Engineering": {
+            "denominator": 8,
+            "placed": 3,
+            "rate": "0.3750",
+            "small_group_warning": false
+          },
+          "Sociology": {
+            "denominator": 7,
+            "placed": 1,
+            "rate": "0.1429",
+            "small_group_warning": false
+          },
+          "Statistics": {
+            "denominator": 8,
+            "placed": 3,
+            "rate": "0.3750",
+            "small_group_warning": false
+          }
+        },
+        "mean_score": "88.37",
+        "median_score": "89.59",
+        "minimum_score": "82.64",
+        "placement_count": 27,
+        "placement_rate_eligible": "0.5745",
+        "placement_rate_submitted": "0.4500",
+        "runtime_ms": "0.099",
+        "strategy": "greedy",
+        "submitted_count": 60,
+        "top_choice_count": 27,
+        "top_choice_denominator": 27,
+        "top_choice_rate": "1.0000",
+        "unplaced_count": 33,
+        "unplaced_reasons": {
+          "student-syn-001": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-002": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-004": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-005": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-006": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-007": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-008": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-009": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-010": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-011": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-012": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-013": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-014": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-015": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-016": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-017": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-018": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-020": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-021": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-037": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-042": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-045": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-048": [
+            "missing_data",
+            "capacity_competition"
+          ],
+          "student-syn-051": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-052": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-053": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-054": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-055": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-056": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-057": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-058": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-059": [
+            "missing_data",
+            "no_eligible_projects"
+          ],
+          "student-syn-060": [
+            "missing_data",
+            "no_eligible_projects"
+          ]
+        }
+      }
+    }
+  },
+  "counts": {
+    "faculty": 10,
+    "projects": 20,
+    "skills": 18,
+    "students": 60
+  },
+  "independent_prototype": true,
+  "input_snapshot_hash": "cda4e23c3a4def270de029fd0804bcbb41a81d0a704a05a5ec097e0717790b3c",
+  "limitation": "Synthetic evaluation cannot establish actual rematching reduction or demographic fairness. A pilot must measure acceptance, withdrawal, rematching rounds, and time-to-placement.",
+  "minimum_score_bp": 8264,
+  "optimality_limitation": null,
+  "placement_count": 27,
+  "run_id": "run-43fb16373432478a8057903e62d59666",
+  "runtime_ms": "161.231",
+  "schema_version": "1.0",
+  "score_version": "rb-score-v1",
+  "seed": 731,
+  "shuffle": {
+    "failing_seeds": [],
+    "identical_assignment_pass_count": 20,
+    "reference_assignments": [
+      [
+        "student-syn-003",
+        "project-hyp-001"
+      ],
+      [
+        "student-syn-019",
+        "project-hyp-001"
+      ],
+      [
+        "student-syn-022",
+        "project-hyp-004"
+      ],
+      [
+        "student-syn-023",
+        "project-hyp-005"
+      ],
+      [
+        "student-syn-024",
+        "project-hyp-006"
+      ],
+      [
+        "student-syn-025",
+        "project-hyp-007"
+      ],
+      [
+        "student-syn-026",
+        "project-hyp-008"
+      ],
+      [
+        "student-syn-027",
+        "project-hyp-009"
+      ],
+      [
+        "student-syn-028",
+        "project-hyp-010"
+      ],
+      [
+        "student-syn-029",
+        "project-hyp-011"
+      ],
+      [
+        "student-syn-030",
+        "project-hyp-012"
+      ],
+      [
+        "student-syn-031",
+        "project-hyp-013"
+      ],
+      [
+        "student-syn-032",
+        "project-hyp-014"
+      ],
+      [
+        "student-syn-033",
+        "project-hyp-015"
+      ],
+      [
+        "student-syn-034",
+        "project-hyp-016"
+      ],
+      [
+        "student-syn-035",
+        "project-hyp-017"
+      ],
+      [
+        "student-syn-036",
+        "project-hyp-018"
+      ],
+      [
+        "student-syn-038",
+        "project-hyp-002"
+      ],
+      [
+        "student-syn-039",
+        "project-hyp-003"
+      ],
+      [
+        "student-syn-040",
+        "project-hyp-004"
+      ],
+      [
+        "student-syn-041",
+        "project-hyp-005"
+      ],
+      [
+        "student-syn-043",
+        "project-hyp-007"
+      ],
+      [
+        "student-syn-044",
+        "project-hyp-008"
+      ],
+      [
+        "student-syn-046",
+        "project-hyp-010"
+      ],
+      [
+        "student-syn-047",
+        "project-hyp-011"
+      ],
+      [
+        "student-syn-049",
+        "project-hyp-013"
+      ],
+      [
+        "student-syn-050",
+        "project-hyp-014"
+      ]
+    ],
+    "requested_runs": 20,
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      17,
+      18,
+      19,
+      20
+    ],
+    "statement": "This checks input-order invariance for the frozen synthetic dataset; it does not establish demographic fairness."
+  },
+  "solver_seed": 731,
+  "status": "proposed",
+  "synthetic_only": true,
+  "total_score_bp": 238586,
+  "worker_count": 1
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "entities": {
+    "student": {
+      "classification": "synthetic demo data only",
+      "key_fields": ["id", "synthetic", "display_name", "major", "interests", "hours_per_week", "learning_goals", "accepts_suggestions", "submitted"],
+      "excluded_fields": ["GPA", "protected attributes", "credentials", "transcripts", "actual student records"]
+    },
+    "faculty": {
+      "classification": "fictional identity unless explicitly sourced",
+      "key_fields": ["id", "display_name", "department", "provenance_type", "source_url", "source_retrieved_at"]
+    },
+    "project": {
+      "classification": "hypothetical opening",
+      "key_fields": ["id", "faculty_id", "capacity", "commitment_hours", "skills", "required_windows", "active", "provenance_label"]
+    },
+    "pair_score": {
+      "classification": "immutable synthetic matching evidence",
+      "key_fields": ["eligible", "eligibility_reasons", "factor_scores_bp", "contributions_bp", "total_bp", "evidence", "gaps", "missing_fields"]
+    },
+    "match_run": {
+      "classification": "immutable input/config/result snapshot with constrained approval and stale metadata",
+      "key_fields": ["status", "input_snapshot_hash", "stage_evidence", "solver_seed", "worker_count", "optimality_limitation"]
+    }
+  },
+  "time_window": "day uses Monday=0 through Sunday=6; minutes are half-open local demo-time intervals [start, end).",
+  "proficiency": "integer 0 through 4; project target is 1 through 4.",
+  "compatibility_index": "0 through 100 compatibility index; never an acceptance probability."
+}
