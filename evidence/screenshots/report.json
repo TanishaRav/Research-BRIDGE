@@ -1,0 +1,416 @@
+{
+  "generated_at": "2026-11-17T18:33:28.458Z",
+  "base_url": "http://127.0.0.1:3000",
+  "screenshots": [
+    {
+      "key": "landing",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "landing",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 360,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 768,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 1024,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 1280,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-dashboard",
+      "width": 1920,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-profile",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-profile",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-projects",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-projects",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-outcome",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "student-outcome",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "faculty-overview",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "faculty-overview",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "faculty-projects",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "faculty-projects",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "faculty-candidates",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "faculty-candidates",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-overview",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-overview",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 360,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 768,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 1024,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 1280,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-run",
+      "width": 1920,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 360,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 768,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 1024,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 1280,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-evidence",
+      "width": 1920,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-data",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-data",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-audit",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "admin-audit",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "about",
+      "width": 390,
+      "status": 200,
+      "errors": []
+    },
+    {
+      "key": "about",
+      "width": 1440,
+      "status": 200,
+      "errors": []
+    }
+  ],
+  "axe": [
+    {
+      "key": "landing",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "landing",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-dashboard",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-profile",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-profile",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-projects",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-projects",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-outcome",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "student-outcome",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "faculty-overview",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "faculty-overview",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "faculty-projects",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "faculty-projects",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "faculty-candidates",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "faculty-candidates",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-overview",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-overview",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-run",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-evidence",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-data",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-data",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-audit",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "admin-audit",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "about",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    },
+    {
+      "key": "about",
+      "total": 0,
+      "serious": 0,
+      "ids": []
+    }
+  ]
+}

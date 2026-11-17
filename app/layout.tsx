@@ -3,6 +3,7 @@ import "@fontsource-variable/space-grotesk";
 import "@fontsource-variable/public-sans";
 import "@fontsource-variable/jetbrains-mono";
 import "./globals.css";
+import { DemoProvider } from "@/lib/demo-context";
 
 export const metadata: Metadata = {
   title: {
@@ -20,7 +21,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <a className="skip-link" href="#main-content">
           Skip to main content
         </a>
-        {children}
+        <DemoProvider>{children}</DemoProvider>
       </body>
     </html>
   );

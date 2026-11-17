@@ -1,0 +1,105 @@
+{
+  "generated_at": "2026-11-17T18:33:39.482Z",
+  "caveat": "Local production-build lab timings on one machine; not field or p75 Core Web Vitals.",
+  "keyboard": {
+    "firstFocus": {
+      "text": "Skip to main content",
+      "href": "#main-content"
+    },
+    "afterSkip": "main-content",
+    "menuFocus": {
+      "tag": "BUTTON",
+      "name": "mobile-nav"
+    },
+    "mobileExpanded": "true",
+    "focusSequence": [
+      {
+        "tag": "BUTTON",
+        "text": "Student"
+      },
+      {
+        "tag": "BUTTON",
+        "text": "Faculty"
+      },
+      {
+        "tag": "BUTTON",
+        "text": "EUReCA Admin"
+      },
+      {
+        "tag": "A",
+        "text": "Overview"
+      },
+      {
+        "tag": "A",
+        "text": "Data & import"
+      },
+      {
+        "tag": "A",
+        "text": "Configure & run"
+      },
+      {
+        "tag": "A",
+        "text": "Fairness evidence"
+      },
+      {
+        "tag": "A",
+        "text": "Audit timeline"
+      },
+      {
+        "tag": "A",
+        "text": "Configure & run"
+      },
+      {
+        "tag": "A",
+        "text": "Review this run"
+      },
+      {
+        "tag": "A",
+        "text": "run-3f9aceb6914d…"
+      },
+      {
+        "tag": "BODY",
+        "text": "Skip to main contentRBResearchBridgeSynthetic EUReCA demoTog"
+      }
+    ],
+    "passed": true
+  },
+  "timing_runs": [
+    {
+      "wallMs": 596,
+      "domContentLoadedMs": 17,
+      "loadEventMs": 31,
+      "firstContentfulPaintMs": 24
+    },
+    {
+      "wallMs": 599,
+      "domContentLoadedMs": 19,
+      "loadEventMs": 35,
+      "firstContentfulPaintMs": 36
+    },
+    {
+      "wallMs": 597,
+      "domContentLoadedMs": 18,
+      "loadEventMs": 33,
+      "firstContentfulPaintMs": 24
+    },
+    {
+      "wallMs": 598,
+      "domContentLoadedMs": 19,
+      "loadEventMs": 35,
+      "firstContentfulPaintMs": 24
+    },
+    {
+      "wallMs": 596,
+      "domContentLoadedMs": 18,
+      "loadEventMs": 34,
+      "firstContentfulPaintMs": 24
+    }
+  ],
+  "medians": {
+    "wallMs": 597,
+    "domContentLoadedMs": 18,
+    "loadEventMs": 34,
+    "firstContentfulPaintMs": 24
+  }
+}

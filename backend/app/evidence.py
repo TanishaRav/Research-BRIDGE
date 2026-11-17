@@ -69,6 +69,7 @@ def generate_evidence() -> tuple[Path, Path, dict]:
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
+            lineterminator="\n",
             fieldnames=[
                 "strategy",
                 "label",

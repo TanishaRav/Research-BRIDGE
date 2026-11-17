@@ -1,21 +1,31 @@
 @import "tailwindcss";
 
-:root {
-  --canvas: #fbfbf9;
-  --surface: #ffffff;
-  --surface-subtle: #f4f4f0;
-  --text: #191919;
-  --text-secondary: #525252;
-  --text-muted: #6b6b6b;
-  --divider: #e5e5e0;
-  --accent: #a6192e;
-  --accent-hover: #851426;
-  --accent-pressed: #6f1020;
-  --focus: #1b5e8a;
-  --success: #216e4e;
-  --warning: #8a4b08;
-  --error: #b42318;
-  --info: #245c8a;
+@theme {
+  --color-canvas: #fbfbf9;
+  --color-surface: #ffffff;
+  --color-subtle: #f4f4f0;
+  --color-ink: #191919;
+  --color-ink-secondary: #525252;
+  --color-ink-muted: #6b6b6b;
+  --color-divider: #e5e5e0;
+  --color-accent: #a6192e;
+  --color-accent-hover: #851426;
+  --color-accent-pressed: #6f1020;
+  --color-accent-soft: #f7e7ea;
+  --color-focus: #1b5e8a;
+  --color-success: #216e4e;
+  --color-success-soft: #e4f1ea;
+  --color-warning: #8a4b08;
+  --color-warning-soft: #f7eddc;
+  --color-error: #b42318;
+  --color-error-soft: #fbe9e7;
+  --color-info: #245c8a;
+  --color-info-soft: #e6eef6;
+
+  --font-sans: "Public Sans Variable", "Avenir Next", Avenir, system-ui, sans-serif;
+  --font-display: "Space Grotesk Variable", "Avenir Next", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", "SFMono-Regular", Menlo, monospace;
+
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -26,16 +36,26 @@
 }
 
 html {
-  background: var(--canvas);
-  color: var(--text);
-  font-family: "Public Sans Variable", "Avenir Next", Avenir, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-text-size-adjust: 100%;
   text-rendering: optimizeLegibility;
 }
 
 body {
   margin: 0;
   min-height: 100vh;
-  background: var(--canvas);
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  margin: 0;
 }
 
 button,
@@ -43,11 +63,7 @@ input,
 select,
 textarea {
   font: inherit;
-}
-
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
+  color: inherit;
 }
 
 a {
@@ -55,8 +71,20 @@ a {
 }
 
 :focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 3px;
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* Force white text on the cardinal accent regardless of inherited link color. */
+.rb-on-accent,
+.rb-on-accent:visited {
+  color: #ffffff;
 }
 
 .skip-link {
@@ -66,8 +94,8 @@ a {
   top: 12px;
   transform: translateY(-160%);
   border-radius: var(--radius-sm);
-  background: var(--text);
-  color: white;
+  background: var(--color-ink);
+  color: #fff;
   padding: 10px 14px;
   text-decoration: none;
   transition: transform 140ms ease;
@@ -77,6 +105,7 @@ a {
   transform: translateY(0);
 }
 
+/* Launch screen (pre-app marketing-free landing). */
 .launch-shell {
   width: min(680px, calc(100% - 40px));
   min-height: 100vh;
@@ -94,78 +123,39 @@ a {
   height: 48px;
   place-items: center;
   margin-bottom: 28px;
-  border: 1px solid var(--divider);
+  border: 1px solid var(--color-divider);
   border-radius: var(--radius-md);
-  background: var(--surface);
-  color: var(--accent);
-  font-family: "Space Grotesk Variable", sans-serif;
+  background: var(--color-surface);
+  color: var(--color-accent);
+  font-family: var(--font-display);
   font-size: 15px;
   font-weight: 700;
-  letter-spacing: -0.03em;
 }
 
 .eyebrow {
   margin: 0 0 10px;
-  color: var(--accent);
+  color: var(--color-accent);
   font-size: 13px;
   font-weight: 650;
 }
 
-h1,
-h2,
-h3 {
-  font-family: "Space Grotesk Variable", "Avenir Next", sans-serif;
-  letter-spacing: -0.035em;
-}
-
 .launch-shell h1 {
-  margin: 0;
   font-size: clamp(2.25rem, 7vw, 3.5rem);
   line-height: 1;
-  font-weight: 620;
 }
 
 .launch-copy {
   max-width: 580px;
   margin: 20px 0 28px;
-  color: var(--text-secondary);
+  color: var(--color-ink-secondary);
   font-size: 18px;
   line-height: 1.6;
-}
-
-.button {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-sm);
-  padding: 0 16px;
-  font-size: 14px;
-  font-weight: 650;
-  text-decoration: none;
-  transition: background-color 140ms ease, border-color 140ms ease;
-}
-
-.button-primary {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: white;
-}
-
-.button-primary:hover {
-  border-color: var(--accent-hover);
-  background: var(--accent-hover);
-}
-
-.button-primary:active {
-  border-color: var(--accent-pressed);
-  background: var(--accent-pressed);
 }
 
 .launch-note {
   max-width: 520px;
   margin: 24px 0 0;
-  color: var(--text-muted);
+  color: var(--color-ink-muted);
   font-size: 13px;
   line-height: 1.55;
 }
@@ -179,4 +169,19 @@ h3 {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+@keyframes rb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.rb-skeleton {
+  background: var(--color-subtle);
+  border-radius: var(--radius-sm);
+  animation: rb-pulse 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rb-skeleton { animation: none; }
 }

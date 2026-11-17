@@ -13,18 +13,21 @@ export default defineConfig({
     screenshot: "only-on-failure",
     reducedMotion: "reduce",
   },
+  // Run e2e against the production build. The Next dev server's HMR websocket can be
+  // unavailable in some sandboxes, which blocks client hydration; `next start` does not
+  // depend on it and reflects what the demo actually ships.
   webServer: [
     {
       command: "npm run dev:api",
       url: "http://127.0.0.1:8000/health/ready",
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: true,
       timeout: 120_000,
     },
     {
-      command: "npm run dev:web",
+      command: "npm run build && npm run start",
       url: "http://127.0.0.1:3000",
-      reuseExistingServer: !process.env.CI,
-      timeout: 120_000,
+      reuseExistingServer: true,
+      timeout: 240_000,
     },
   ],
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
