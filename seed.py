@@ -96,7 +96,9 @@ def seed():
         bio_session = db.insert(
             conn, "match_sessions",
             name="Biology Research Match (Spring)", org_unit_id=bio_unit,
-            mode="mutual", status="preferencing", timezone="America/Chicago",
+            mode="mutual", matching_method="mutual", weighting="equal",
+            status="preferencing", timezone="America/Chicago",
+            favorite_invites=1, show_ratings=1,
             description="Mutual-preference matching for the Biology department.",
             updated_at=now,
         )
@@ -112,9 +114,11 @@ def seed():
             pid = db.insert(
                 conn, "projects", session_id=bio_session, title=title,
                 description="A hands-on undergraduate research project.",
-                capacity=cap, status="published", updated_at=now,
+                positions=cap, capacity=cap, major_policy="prefer",
+                primary_department_id=bio_dept, status="published", updated_at=now,
             )
-            db.insert(conn, "project_mentors", project_id=pid, user_id=mentor, role="faculty")
+            db.insert(conn, "project_mentors", project_id=pid, user_id=mentor,
+                      role="faculty", is_pi=1, permission="editor")
             for mid in elig:
                 db.insert(conn, "project_eligible_majors", project_id=pid, major_id=mid)
             bio_projects.append(pid)
@@ -126,10 +130,13 @@ def seed():
                 conn, "student_profiles", user_id=uid, session_id=bio_session,
                 year="junior", gpa=3.4 + idx * 0.1,
                 bio="Interested in molecular biology research.",
+                interests="Molecular biology, genetics, and lab techniques.",
+                time_kind="credit", credit_option="2",
                 submitted=1, updated_at=now,
             )
-            for mid in majors:
-                db.insert(conn, "profile_majors", profile_id=profile_id, major_id=mid)
+            for mpos, mid in enumerate(majors):
+                db.insert(conn, "profile_majors", profile_id=profile_id,
+                          major_id=mid, kind="major" if mpos == 0 else "secondary")
             # Ranked student preferences across the three projects.
             ordering = bio_projects[idx % len(bio_projects):] + bio_projects[:idx % len(bio_projects)]
             for rank, pid in enumerate(ordering, start=1):
@@ -151,7 +158,8 @@ def seed():
         mse_session = db.insert(
             conn, "match_sessions",
             name="Materials Engineering Match (Spring)", org_unit_id=mse_unit,
-            mode="student", status="open", timezone="America/Chicago",
+            mode="student", matching_method="student", weighting="equal",
+            status="open", timezone="America/Chicago",
             description="Student-preference matching for Materials Engineering.",
             updated_at=now,
         )
@@ -165,9 +173,11 @@ def seed():
             pid = db.insert(
                 conn, "projects", session_id=mse_session, title=title,
                 description="A hands-on undergraduate research project.",
-                capacity=cap, status="published", updated_at=now,
+                positions=cap, capacity=cap, major_policy="prefer",
+                primary_department_id=mse_dept, status="published", updated_at=now,
             )
-            db.insert(conn, "project_mentors", project_id=pid, user_id=mentor, role="faculty")
+            db.insert(conn, "project_mentors", project_id=pid, user_id=mentor,
+                      role="faculty", is_pi=1, permission="editor")
             for mid in elig:
                 db.insert(conn, "project_eligible_majors", project_id=pid, major_id=mid)
 

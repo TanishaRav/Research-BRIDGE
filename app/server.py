@@ -21,8 +21,13 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
+from datetime import datetime
+
 from app import db
+from app import sanitize
 from app import templates
+from app.services import notify as notify_service
+from app.services import workday
 
 # ---------------------------------------------------------------------------
 # Configuration / secrets
@@ -418,6 +423,1464 @@ def _start_session(conn, resp, user_id):
     csrf = secrets.token_urlsafe(32)
     db.create_auth_session(conn, token, user_id, csrf)
     resp.set_cookie(COOKIE_NAME, make_cookie_value(token), http_only=True, same_site="Lax")
+
+
+# ---------------------------------------------------------------------------
+# FEAT-003 shared helpers: form parsing, deadlines, timezones
+# ---------------------------------------------------------------------------
+
+# Lifecycle phases (design.md conceptual list) mapped onto the db.py status
+# vocabulary. Advancing walks this ordered list.
+PHASE_ORDER = [
+    "draft", "open", "preferencing", "matching",
+    "review", "contracting", "closed",
+]
+
+PHASE_LABELS = {
+    "draft": "Configuration",
+    "open": "Registration",
+    "preferencing": "Preferencing",
+    "matching": "Initial matching",
+    "review": "Review / interviews",
+    "contracting": "Contracting",
+    "closed": "Placement finalized / archived",
+}
+
+# Per-phase deadline column for the lifecycle locking rule (R2.5).
+DEADLINE_COLUMNS = {
+    "student_profile": "deadline_student_profile",
+    "faculty_project": "deadline_faculty_project",
+    "student_preference": "deadline_student_preference",
+    "faculty_preference": "deadline_faculty_preference",
+    "contract": "deadline_contract",
+}
+
+MATCHING_METHODS = ("none", "ai", "student", "mutual")
+WEIGHTINGS = ("equal", "faculty_heavy")
+COMMON_TIMEZONES = (
+    "UTC", "America/New_York", "America/Chicago", "America/Denver",
+    "America/Los_Angeles", "Europe/London", "Europe/Berlin", "Asia/Tokyo",
+)
+CREDIT_OPTIONS = ("1", "2", "3", "1-2", "1-3", "2-3")
+
+
+def fv(form, key, default=""):
+    """First value for `key` in a parse_qs dict, stripped."""
+    return (form.get(key) or [default])[0].strip()
+
+
+def fvlist(form, key):
+    """All values for `key` (e.g. multi-select), trimmed and non-empty."""
+    return [v.strip() for v in form.get(key, []) if v.strip()]
+
+
+def fbool(form, key):
+    """Checkbox -> 0/1."""
+    return 1 if (form.get(key) or [""])[0] else 0
+
+
+def fint(form, key, default=None):
+    raw = fv(form, key)
+    if raw == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def combine_deadline(date_str, time_str, tz_name):
+    """Build a tz-aware ISO-8601 string from date+time+zone, or '' (R2.3)."""
+    date_str = (date_str or "").strip()
+    if not date_str:
+        return ""
+    time_str = (time_str or "").strip() or "23:59"
+    try:
+        from zoneinfo import ZoneInfo
+        naive = datetime.fromisoformat("%sT%s" % (date_str, time_str))
+        aware = naive.replace(tzinfo=ZoneInfo(tz_name or "UTC"))
+        return aware.isoformat()
+    except Exception:
+        return ""
+
+
+def deadline_passed(iso_value):
+    """True if `iso_value` is a valid timestamp in the past."""
+    if not iso_value:
+        return False
+    try:
+        from datetime import timezone as _tz
+        dt = datetime.fromisoformat(iso_value)
+        now = datetime.now(_tz.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=_tz.utc)
+        return dt < now
+    except Exception:
+        return False
+
+
+def _reopened_set(session):
+    raw = session["reopened_phases"] if "reopened_phases" in session.keys() else ""
+    return set(p for p in (raw or "").split(",") if p)
+
+
+def phase_locked(session, phase_key):
+    """True if `phase_key`'s deadline has passed and it is not reopened (R2.5)."""
+    col = DEADLINE_COLUMNS.get(phase_key)
+    if col is None:
+        return False
+    if phase_key in _reopened_set(session):
+        return False
+    return deadline_passed(session[col])
+
+
+def _session_or_404(ctx):
+    sid = fint_param(ctx, "id")
+    if sid is None:
+        return None, not_found("Session not found.")
+    session = db.get_session(ctx.conn, sid)
+    if session is None:
+        return None, not_found("Session not found.")
+    return session, None
+
+
+def fint_param(ctx, name):
+    try:
+        return int(ctx.params.get(name))
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Session create / configure / lifecycle (R2)
+# ---------------------------------------------------------------------------
+
+def _tz_options(selected):
+    return "".join(
+        '<option value="%s"%s>%s</option>'
+        % (templates.esc(z), " selected" if z == selected else "", templates.esc(z))
+        for z in COMMON_TIMEZONES
+    )
+
+
+def _select(name, options, selected, label):
+    opts = "".join(
+        '<option value="%s"%s>%s</option>'
+        % (templates.esc(v), " selected" if v == selected else "", templates.esc(text))
+        for v, text in options
+    )
+    return (
+        '<p class="field"><label for="f-%s">%s</label>'
+        '<select id="f-%s" name="%s">%s</select></p>'
+        % (templates.esc(name), templates.esc(label), templates.esc(name),
+           templates.esc(name), opts)
+    )
+
+
+def _session_form(ctx, values, errors=None, heading="Create a match session", action="/sessions"):
+    errors = errors or {}
+    csrf = templates.csrf_input(ctx.user["csrf_token"])
+    org_rows = ctx.conn.execute("SELECT id, name FROM org_units ORDER BY name").fetchall()
+    org_opts = [("", "-- none --")] + [(str(r["id"]), r["name"]) for r in org_rows]
+
+    deadline_fields = []
+    for key, col in DEADLINE_COLUMNS.items():
+        label = key.replace("_", " ").title()
+        date_val = values.get("%s_date" % key, "")
+        time_val = values.get("%s_time" % key, "")
+        deadline_fields.append(
+            '<fieldset class="deadline"><legend>%s deadline</legend>'
+            '<p class="field"><label for="f-%s_date">Date</label>'
+            '<input id="f-%s_date" type="date" name="%s_date" value="%s"></p>'
+            '<p class="field"><label for="f-%s_time">Time</label>'
+            '<input id="f-%s_time" type="time" name="%s_time" value="%s"></p>'
+            "</fieldset>"
+            % (templates.esc(label), key, key, key, templates.esc(date_val),
+               key, key, key, templates.esc(time_val))
+        )
+
+    def err(name):
+        return templates.field_error(errors.get(name))
+
+    body = (
+        "%s"
+        '<form method="post" action="%s" class="stacked">'
+        "%s"
+        '<p class="field"><label for="f-name">Session name</label>'
+        '<input id="f-name" name="name" value="%s" required>%s</p>'
+        "%s"  # org
+        "%s"  # method
+        "%s"  # weighting
+        "%s"  # timezone
+        "<fieldset><legend>Per-phase deadlines (shown with timezone)</legend>%s</fieldset>"
+        '<fieldset><legend>Feature toggles</legend>'
+        '<p class="field check"><label><input type="checkbox" name="allow_super_interest"%s> Allow super-interest</label></p>'
+        '<p class="field check"><label><input type="checkbox" name="favorite_invites"%s> Favorite invites</label></p>'
+        '<p class="field check"><label><input type="checkbox" name="show_ratings"%s> Show ratings</label></p>'
+        "</fieldset>"
+        '<p class="field"><label for="f-questions_profile">Student custom questions (one per line)</label>'
+        '<textarea id="f-questions_profile" name="questions_profile" rows="3">%s</textarea></p>'
+        '<p class="field"><label for="f-questions_project">Project custom questions (one per line)</label>'
+        '<textarea id="f-questions_project" name="questions_project" rows="3">%s</textarea></p>'
+        '<p><button type="submit">Save session</button></p>'
+        "</form>"
+    ) % (
+        '<p class="error" role="alert">%s</p>' % templates.esc(errors["_form"]) if errors.get("_form") else "",
+        action, csrf,
+        templates.esc(values.get("name", "")), err("name"),
+        _select("org_unit_id", org_opts, values.get("org_unit_id", ""), "Owning org unit"),
+        _select("matching_method", [(m, m) for m in MATCHING_METHODS], values.get("matching_method", "mutual"), "Matching method"),
+        _select("weighting", [(w, w) for w in WEIGHTINGS], values.get("weighting", "equal"), "Weighting"),
+        '<p class="field"><label for="f-timezone">Timezone</label>'
+        '<select id="f-timezone" name="timezone">%s</select></p>' % _tz_options(values.get("timezone", "UTC")),
+        "".join(deadline_fields),
+        " checked" if values.get("allow_super_interest") else "",
+        " checked" if values.get("favorite_invites") else "",
+        " checked" if values.get("show_ratings") else "",
+        templates.esc(values.get("questions_profile", "")),
+        templates.esc(values.get("questions_project", "")),
+    )
+    return templates.layout(heading, templates.page(heading, body), ctx.user)
+
+
+@route("GET", "/sessions")
+def sessions_index(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    sessions = db.list_sessions_for_user(ctx.conn, ctx.user)
+    rows = "".join(
+        '<li><a href="/sessions/%d">%s</a> '
+        '<span class="pill">%s</span> <span class="pill">%s</span></li>'
+        % (s["id"], templates.esc(s["name"]),
+           templates.esc(PHASE_LABELS.get(s["status"], s["status"])),
+           templates.esc(s["mode"]))
+        for s in sessions
+    )
+    listing = '<ul class="session-list">%s</ul>' % rows if rows else "<p>No sessions visible to you yet.</p>"
+    create = ""
+    if ctx.user["role"] in ("admin", "manager"):
+        create = '<p><a class="button-link" href="/sessions/new">Create a session</a></p>'
+    body = create + listing
+    return html_response(templates.layout("Sessions", templates.page("Match sessions", body), ctx.user))
+
+
+@route("GET", "/sessions/new")
+def sessions_new(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    return html_response(_session_form(ctx, {"timezone": "UTC", "matching_method": "mutual", "weighting": "equal"}))
+
+
+@route("POST", "/sessions")
+def sessions_create(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    f = ctx.form
+    values = {
+        "name": fv(f, "name"),
+        "org_unit_id": fv(f, "org_unit_id"),
+        "matching_method": fv(f, "matching_method", "mutual"),
+        "weighting": fv(f, "weighting", "equal"),
+        "timezone": fv(f, "timezone", "UTC"),
+        "allow_super_interest": fbool(f, "allow_super_interest"),
+        "favorite_invites": fbool(f, "favorite_invites"),
+        "show_ratings": fbool(f, "show_ratings"),
+        "questions_profile": fv(f, "questions_profile"),
+        "questions_project": fv(f, "questions_project"),
+    }
+    for key in DEADLINE_COLUMNS:
+        values["%s_date" % key] = fv(f, "%s_date" % key)
+        values["%s_time" % key] = fv(f, "%s_time" % key)
+
+    errors = {}
+    if not values["name"]:
+        errors["name"] = "Session name is required."
+    if values["matching_method"] not in MATCHING_METHODS:
+        errors["_form"] = "Invalid matching method."
+    if values["weighting"] not in WEIGHTINGS:
+        errors["_form"] = "Invalid weighting."
+    tz = values["timezone"] or "UTC"
+    if errors:
+        return html_response(_session_form(ctx, values, errors), 400)
+
+    # Map matching method to the stored session mode (student vs mutual).
+    mode = "mutual" if values["matching_method"] == "mutual" else "student"
+    cols = {
+        "name": values["name"],
+        "org_unit_id": int(values["org_unit_id"]) if values["org_unit_id"] else None,
+        "mode": mode,
+        "matching_method": values["matching_method"],
+        "weighting": values["weighting"],
+        "status": "draft",
+        "timezone": tz,
+        "allow_super_interest": values["allow_super_interest"],
+        "favorite_invites": values["favorite_invites"],
+        "show_ratings": values["show_ratings"],
+        "updated_at": db.utcnow(),
+    }
+    for key, col in DEADLINE_COLUMNS.items():
+        cols[col] = combine_deadline(values["%s_date" % key], values["%s_time" % key], tz)
+    session_id = db.insert(ctx.conn, "match_sessions", **cols)
+    db.add_session_manager(ctx.conn, session_id, ctx.user["id"])
+
+    _seed_questions(ctx.conn, session_id, values["questions_profile"], "profile")
+    _seed_questions(ctx.conn, session_id, values["questions_project"], "project")
+    ctx.conn.commit()
+    return redirect("/sessions/%d" % session_id)
+
+
+def _seed_questions(conn, session_id, text, target):
+    pos = 0
+    for line in (text or "").splitlines():
+        prompt = line.strip()
+        if not prompt:
+            continue
+        db.insert(conn, "custom_questions", session_id=session_id, target=target,
+                  prompt=prompt, kind="longtext", required=0, position=pos,
+                  updated_at=db.utcnow())
+        pos += 1
+
+
+@route("GET", "/sessions/{id}")
+def session_detail(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+
+    manages = db.can_manage_session(ctx.conn, session, ctx.user)
+    tz = session["timezone"]
+    deadline_rows = "".join(
+        "<tr><td data-label=\"Phase\">%s</td><td data-label=\"Deadline\">%s</td>"
+        "<td data-label=\"Status\">%s</td></tr>"
+        % (templates.esc(key.replace("_", " ").title()),
+           templates.tz_label(session[col], tz),
+           "locked" if phase_locked(session, key) else "open")
+        for key, col in DEADLINE_COLUMNS.items()
+    )
+
+    actions = []
+    if manages:
+        cur = session["status"]
+        idx = PHASE_ORDER.index(cur) if cur in PHASE_ORDER else 0
+        if idx < len(PHASE_ORDER) - 1:
+            nxt = PHASE_ORDER[idx + 1]
+            actions.append(
+                '<form method="post" action="/sessions/%d/phase" class="inline">%s'
+                '<input type="hidden" name="to" value="%s">'
+                '<button type="submit">Advance to %s</button></form>'
+                % (session["id"], templates.csrf_input(ctx.user["csrf_token"]),
+                   templates.esc(nxt), templates.esc(PHASE_LABELS[nxt])))
+        # Reopen any locked phase.
+        for key, col in DEADLINE_COLUMNS.items():
+            if phase_locked(session, key):
+                actions.append(
+                    '<form method="post" action="/sessions/%d/phase" class="inline">%s'
+                    '<input type="hidden" name="reopen" value="%s">'
+                    '<button type="submit">Reopen %s</button></form>'
+                    % (session["id"], templates.csrf_input(ctx.user["csrf_token"]),
+                       templates.esc(key), templates.esc(key.replace("_", " "))))
+
+    role = ctx.user["role"]
+    participant_links = []
+    if role == "faculty":
+        participant_links.append('<a href="/sessions/%d/projects">Post / manage projects</a>' % session["id"])
+    if role == "student":
+        participant_links.append('<a href="/sessions/%d/profile">My profile</a>' % session["id"])
+    participant_links.append('<a href="/sessions/%d/browse">Browse</a>' % session["id"])
+
+    body = (
+        '<p class="pill">%s</p> <p class="pill">mode: %s</p> '
+        '<p class="pill">method: %s</p> <p class="pill">weighting: %s</p>'
+        "<p>%s</p>"
+        '<section aria-labelledby="dl-h"><h2 id="dl-h">Phase deadlines (%s)</h2>'
+        "<table><thead><tr><th>Phase</th><th>Deadline</th><th>Status</th></tr></thead>"
+        "<tbody>%s</tbody></table></section>"
+        '<section aria-labelledby="act-h"><h2 id="act-h">Actions</h2><p>%s</p></section>'
+    ) % (
+        templates.esc(PHASE_LABELS.get(session["status"], session["status"])),
+        templates.esc(session["mode"]),
+        templates.esc(session["matching_method"]),
+        templates.esc(session["weighting"]),
+        templates.esc(session["description"]),
+        templates.esc(tz),
+        deadline_rows,
+        " ".join(participant_links + actions) or "No actions available.",
+    )
+    return html_response(templates.layout(session["name"], templates.page(templates.esc(session["name"]), body), ctx.user))
+
+
+@route("POST", "/sessions/{id}/phase")
+def session_phase(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+
+    reopen = fv(ctx.form, "reopen")
+    if reopen and reopen in DEADLINE_COLUMNS:
+        current = _reopened_set(session)
+        current.add(reopen)
+        db.update_session(ctx.conn, session["id"], reopened_phases=",".join(sorted(current)))
+        ctx.conn.commit()
+        return redirect("/sessions/%d" % session["id"])
+
+    to = fv(ctx.form, "to")
+    if to not in PHASE_ORDER:
+        return redirect("/sessions/%d" % session["id"])
+    cur_idx = PHASE_ORDER.index(session["status"]) if session["status"] in PHASE_ORDER else 0
+    if PHASE_ORDER.index(to) != cur_idx + 1:
+        # Only allow single-step advancement.
+        return redirect("/sessions/%d" % session["id"])
+    db.update_session(ctx.conn, session["id"], status=to)
+    ctx.conn.commit()
+    return redirect("/sessions/%d" % session["id"])
+
+
+# ---------------------------------------------------------------------------
+# Faculty project posting (R3)
+# ---------------------------------------------------------------------------
+
+def _major_checkboxes(conn, name, selected_ids):
+    selected = set(selected_ids or [])
+    rows = db.list_majors(conn)
+    items = "".join(
+        '<label class="check"><input type="checkbox" name="%s" value="%d"%s> %s</label>'
+        % (name, r["id"], " checked" if r["id"] in selected else "", templates.esc(r["name"]))
+        for r in rows
+    )
+    return '<div class="checkgroup">%s</div>' % items
+
+
+def _dept_options(conn, selected):
+    rows = db.list_departments(conn)
+    opts = [("", "-- none --")] + [(str(r["id"]), r["name"]) for r in rows]
+    return _select("primary_department_id", opts, str(selected) if selected else "", "Primary mentor department")
+
+
+def _mentor_options(conn, selected_pi):
+    people = workday.search_people(conn, "", limit=50)
+    return "".join(
+        '<option value="%d"%s>%s (%s)</option>'
+        % (p["id"], " selected" if p["id"] == selected_pi else "",
+           templates.esc(p["display_name"]), templates.esc(p["email"]))
+        for p in people
+    )
+
+
+def _project_form(ctx, session, values, errors=None, project=None):
+    errors = errors or {}
+    csrf = templates.csrf_input(ctx.user["csrf_token"])
+    action = "/projects/%d" % project["id"] if project else "/sessions/%d/projects" % session["id"]
+    project_id = project["id"] if project else 0
+    questions = db.list_questions(ctx.conn, session["id"], "project")
+
+    def err(name):
+        return templates.field_error(errors.get(name))
+
+    q_html = "".join(
+        templates.textarea("Q: %s" % q["prompt"], "q_%d" % q["id"],
+                           values.get("q_%d" % q["id"], ""), max_words=q["max_words"], rows=3)
+        for q in questions
+    )
+    autosave_attr = ' data-autosave="/projects/%d/autosave"' % project_id if project_id else ""
+
+    pi_selected = values.get("pi_id", "")
+    pi_int = int(pi_selected) if str(pi_selected).isdigit() else None
+    comp_type = values.get("comp_type", "credit")
+
+    body = (
+        "%s"
+        '<form method="post" action="%s" class="stacked" id="project-form"%s>'
+        "%s"
+        '<div aria-live="polite" class="autosave-status" id="autosave-status"></div>'
+        '<p class="field"><label for="f-title">Project title</label>'
+        '<input id="f-title" name="title" value="%s" required>%s</p>'
+        '<p class="field"><label for="f-pi_id">Principal investigator (PI)</label>'
+        '<select id="f-pi_id" name="pi_id">%s</select>%s</p>'
+        '<p class="field"><label for="f-mentor_ids">Additional mentors</label>'
+        '<select id="f-mentor_ids" name="mentor_ids" multiple size="4">%s</select>'
+        '<span class="hint">Exactly one PI; add co-mentors here.</span></p>'
+        "%s"  # primary department
+        "%s"  # description textarea (<=250 words)
+        "%s"  # background (<=100)
+        "%s"  # responsibilities (<=100)
+        '<p class="field check"><label><input type="checkbox" name="is_group"%s> Group project</label></p>'
+        '<p class="field"><label for="f-positions">Positions</label>'
+        '<input id="f-positions" name="positions" type="number" min="1" value="%s" data-positions>%s'
+        '<span class="hint">Warns if more than 20.</span></p>'
+        '<p class="field check"><label><input type="checkbox" name="noncitizen_eligible"%s> Non-citizens eligible</label></p>'
+        '<fieldset><legend>Compensation</legend>%s'
+        '<div class="comp-credit"><p class="field"><label for="f-credit_option">Credit option</label>'
+        '<select id="f-credit_option" name="credit_option">%s</select></p>'
+        '<p class="field"><label for="f-course_name">Course name</label>'
+        '<input id="f-course_name" name="course_name" value="%s"></p></div>'
+        '<div class="comp-pay"><p class="field"><label for="f-hourly_rate">Hourly rate</label>'
+        '<input id="f-hourly_rate" name="hourly_rate" type="number" step="0.01" min="0" value="%s"></p>'
+        '<p class="field"><label for="f-cap_kind">Cap kind</label>'
+        '<select id="f-cap_kind" name="cap_kind"><option value="">none</option>'
+        '<option value="hours"%s>hours</option><option value="dollars"%s>dollars</option></select></p>'
+        '<p class="field"><label for="f-cap_value">Cap value</label>'
+        '<input id="f-cap_value" name="cap_value" type="number" step="0.01" min="0" value="%s"></p></div>'
+        "</fieldset>"
+        '<fieldset><legend>Major policy</legend>%s'
+        '<p>Eligible / preferred majors:</p>%s</fieldset>'
+        '<fieldset><legend>Alerts</legend>'
+        '<p class="field check"><label><input type="checkbox" name="alert_on_preference"%s> Alert me when a student prefers this</label></p>'
+        '<p class="field"><label for="f-alert_scope">Alert scope</label>'
+        '<select id="f-alert_scope" name="alert_scope"><option value="each"%s>each</option>'
+        '<option value="digest"%s>daily digest</option></select></p></fieldset>'
+        "%s"  # custom questions
+        '<p><button type="submit" name="action" value="publish">Publish project</button> '
+        '<button type="submit" name="action" value="draft" class="secondary">Save draft</button></p>'
+        "</form>"
+    ) % (
+        '<p class="error" role="alert">%s</p>' % templates.esc(errors["_form"]) if errors.get("_form") else "",
+        action, autosave_attr, csrf,
+        templates.esc(values.get("title", "")), err("title"),
+        _mentor_options(ctx.conn, pi_int), err("pi_id"),
+        _mentor_options(ctx.conn, None),
+        _dept_options(ctx.conn, values.get("primary_department_id", "")),
+        templates.textarea("Description (rich, <=250 words)", "description_html",
+                           values.get("description_html", ""), max_words=250, rows=6,
+                           hint="Allowed: bold, lists, links, up to 2 images/videos.") + err("description_html"),
+        templates.textarea("Background (<=100 words)", "background",
+                           values.get("background", ""), max_words=100, rows=3),
+        templates.textarea("Responsibilities (<=100 words)", "responsibilities",
+                           values.get("responsibilities", ""), max_words=100, rows=3),
+        " checked" if values.get("is_group") else "",
+        templates.esc(values.get("positions", "1")), err("positions"),
+        " checked" if values.get("noncitizen_eligible", True) else "",
+        '<p class="field"><label for="f-comp_type">Type</label>'
+        '<select id="f-comp_type" name="comp_type" data-comp-toggle>'
+        '<option value="credit"%s>credit</option><option value="pay"%s>pay</option></select></p>'
+        % (" selected" if comp_type == "credit" else "", " selected" if comp_type == "pay" else ""),
+        "".join('<option value="%s"%s>%s</option>'
+                % (c, " selected" if values.get("credit_option") == c else "", c) for c in CREDIT_OPTIONS),
+        templates.esc(values.get("course_name", "")),
+        templates.esc(values.get("hourly_rate", "")),
+        " selected" if values.get("cap_kind") == "hours" else "",
+        " selected" if values.get("cap_kind") == "dollars" else "",
+        templates.esc(values.get("cap_value", "")),
+        _select("major_policy", [("none", "none"), ("prefer", "prefer"), ("must", "must")],
+                values.get("major_policy", "none"), "Policy"),
+        _major_checkboxes(ctx.conn, "eligible_majors", values.get("eligible_majors", [])),
+        " checked" if values.get("alert_on_preference") else "",
+        " selected" if values.get("alert_scope", "each") == "each" else "",
+        " selected" if values.get("alert_scope") == "digest" else "",
+        q_html,
+    )
+    heading = "Edit project" if project else "Post a research project"
+    return templates.layout(heading, templates.page(heading, body), ctx.user)
+
+
+def _read_project_form(f):
+    return {
+        "title": fv(f, "title"),
+        "pi_id": fv(f, "pi_id"),
+        "mentor_ids": fvlist(f, "mentor_ids"),
+        "primary_department_id": fv(f, "primary_department_id"),
+        "description_html": fv(f, "description_html"),
+        "background": fv(f, "background"),
+        "responsibilities": fv(f, "responsibilities"),
+        "is_group": fbool(f, "is_group"),
+        "positions": fv(f, "positions", "1"),
+        "noncitizen_eligible": fbool(f, "noncitizen_eligible"),
+        "comp_type": fv(f, "comp_type", "credit"),
+        "credit_option": fv(f, "credit_option"),
+        "course_name": fv(f, "course_name"),
+        "hourly_rate": fv(f, "hourly_rate"),
+        "cap_kind": fv(f, "cap_kind"),
+        "cap_value": fv(f, "cap_value"),
+        "major_policy": fv(f, "major_policy", "none"),
+        "eligible_majors": [int(x) for x in fvlist(f, "eligible_majors") if x.isdigit()],
+        "alert_on_preference": fbool(f, "alert_on_preference"),
+        "alert_scope": fv(f, "alert_scope", "each"),
+    }
+
+
+def _validate_project(values, finalize):
+    """Return (errors, warnings). Required-field checks only on finalize (R3.10)."""
+    errors = {}
+    warnings = []
+    positions = None
+    try:
+        positions = int(values["positions"])
+    except (ValueError, TypeError):
+        errors["positions"] = "Positions must be a whole number."
+    else:
+        if positions < 1:
+            errors["positions"] = "Positions must be at least 1."
+        elif positions > 20:
+            warnings.append("Positions is greater than 20 (%d); please confirm." % positions)
+    if sanitize.word_count(values["description_html"]) > 250:
+        errors["description_html"] = "Description exceeds 250 words."
+    if finalize:
+        if not values["title"]:
+            errors["title"] = "Title is required."
+        if not values["pi_id"] or not str(values["pi_id"]).isdigit():
+            errors["pi_id"] = "Select a principal investigator."
+        if not values["description_html"]:
+            errors["description_html"] = errors.get("description_html") or "Description is required."
+        if values["comp_type"] == "credit" and not values["credit_option"]:
+            errors["_form"] = "Choose a credit option."
+        if values["comp_type"] == "pay" and not values["hourly_rate"]:
+            errors["_form"] = "Enter an hourly rate for paid positions."
+        if values["major_policy"] in ("must", "prefer") and not values["eligible_majors"]:
+            errors["_form"] = "Select at least one major for this policy."
+    return errors, warnings, positions
+
+
+def _save_project(conn, session, values, positions, status, project_id=None):
+    sanitized = sanitize.sanitize_html(values["description_html"])
+    rate = None
+    if values["hourly_rate"]:
+        try:
+            rate = float(values["hourly_rate"])
+        except ValueError:
+            rate = None
+    cap_value = None
+    if values["cap_value"]:
+        try:
+            cap_value = float(values["cap_value"])
+        except ValueError:
+            cap_value = None
+    cols = {
+        "session_id": session["id"],
+        "title": values["title"] or "Untitled draft",
+        "description": sanitized,
+        "background": values["background"],
+        "responsibilities": values["responsibilities"],
+        "primary_department_id": int(values["primary_department_id"]) if values["primary_department_id"] else None,
+        "is_group": values["is_group"],
+        "positions": positions if positions else 1,
+        "capacity": positions if positions else 1,
+        "noncitizen_eligible": values["noncitizen_eligible"],
+        "comp_type": values["comp_type"],
+        "credit_option": values["credit_option"],
+        "course_name": values["course_name"],
+        "hourly_rate": rate,
+        "cap_kind": values["cap_kind"],
+        "cap_value": cap_value,
+        "major_policy": values["major_policy"],
+        "alert_on_preference": values["alert_on_preference"],
+        "alert_scope": values["alert_scope"],
+        "status": status,
+    }
+    if project_id is None:
+        project_id = db.insert(conn, "projects", updated_at=db.utcnow(), **cols)
+    else:
+        db.update_project(conn, project_id, **cols)
+
+    # Mentors: PI + co-mentors.
+    mentors = []
+    if str(values["pi_id"]).isdigit():
+        mentors.append({"user_id": int(values["pi_id"]), "is_pi": True, "permission": "editor"})
+    for mid in values["mentor_ids"]:
+        if mid.isdigit() and int(mid) != int(values["pi_id"] or 0):
+            mentors.append({"user_id": int(mid), "is_pi": False, "permission": "preferencing"})
+    if mentors:
+        db.set_project_mentors(conn, project_id, mentors)
+    db.set_project_eligible_majors(conn, project_id, values["eligible_majors"])
+
+    # Custom-question answers.
+    for q in db.list_questions(conn, session["id"], "project"):
+        db.upsert_answer(conn, q["id"], "", project_id=project_id)  # ensure row
+    return project_id
+
+
+@route("GET", "/sessions/{id}/projects")
+def project_list_or_new(ctx):
+    guard = require_role(ctx, "faculty", "admin", "manager")
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    # Faculty see a new-project form plus their existing projects.
+    projects = db.list_projects(ctx.conn, session["id"])
+    mine = [p for p in projects if db.is_project_mentor(ctx.conn, p["id"], ctx.user["id"])]
+    listing = "".join(
+        '<li><a href="/projects/%d">%s</a> <span class="pill">%s</span></li>'
+        % (p["id"], templates.esc(p["title"]), templates.esc(p["status"]))
+        for p in mine
+    )
+    existing = '<section aria-labelledby="mine-h"><h2 id="mine-h">My projects</h2><ul class="session-list">%s</ul></section>' % listing if listing else ""
+    values = {"positions": "1", "noncitizen_eligible": True, "comp_type": "credit", "alert_scope": "each"}
+    form_html = _project_form(ctx, session, values)
+    # The form helper already returns a full layout; render list above it by
+    # re-wrapping: simplest is to show the list page first with a link.
+    return html_response(form_html if not existing else _wrap_with_section(form_html, existing))
+
+
+def _wrap_with_section(full_layout_html, section_html):
+    """Inject a section right after the opening <main>'s <h1> line."""
+    marker = '<main id="main">\n'
+    idx = full_layout_html.find(marker)
+    if idx == -1:
+        return full_layout_html
+    insert_at = idx + len(marker)
+    # Insert the section after the <h1> that follows.
+    h1_end = full_layout_html.find("</h1>", insert_at)
+    if h1_end != -1:
+        insert_at = h1_end + len("</h1>\n")
+    return full_layout_html[:insert_at] + section_html + full_layout_html[insert_at:]
+
+
+@route("POST", "/sessions/{id}/projects")
+def project_create(ctx):
+    guard = require_role(ctx, "faculty", "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    if phase_locked(session, "faculty_project"):
+        return forbidden("The project submission deadline has passed.")
+
+    values = _read_project_form(ctx.form)
+    finalize = fv(ctx.form, "action", "publish") == "publish"
+    errors, warnings, positions = _validate_project(values, finalize)
+    if errors:
+        return html_response(_project_form(ctx, session, values, errors), 400)
+    status = "published" if finalize else "draft"
+    project_id = _save_project(ctx.conn, session, values, positions, status)
+    for q in db.list_questions(ctx.conn, session["id"], "project"):
+        db.upsert_answer(ctx.conn, q["id"], fv(ctx.form, "q_%d" % q["id"]), project_id=project_id)
+    ctx.conn.commit()
+    return redirect("/projects/%d" % project_id)
+
+
+def _can_edit_project(ctx, project):
+    if ctx.user["role"] in ("admin", "manager"):
+        return True
+    return db.is_project_mentor(ctx.conn, project["id"], ctx.user["id"])
+
+
+@route("GET", "/projects/{id}")
+def project_detail(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    pid = fint_param(ctx, "id")
+    project = db.get_project(ctx.conn, pid) if pid else None
+    if project is None:
+        return not_found("Project not found.")
+    session = db.get_session(ctx.conn, project["session_id"])
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this project.")
+
+    # Editors get the edit form prefilled; others get a read-only view.
+    if _can_edit_project(ctx, project):
+        values = _project_to_values(ctx.conn, project)
+        return html_response(_project_form(ctx, session, values, project=project))
+
+    mentors = db.project_mentors(ctx.conn, project["id"])
+    mentor_html = ", ".join(
+        "%s%s" % (templates.esc(m["display_name"]), " (PI)" if m["is_pi"] else "")
+        for m in mentors
+    )
+    favs = db.favorite_count(ctx.conn, project["id"])
+    body = (
+        "<p>%s</p>"
+        "<p><strong>Mentors:</strong> %s</p>"
+        "<p><strong>Positions:</strong> %d &middot; <strong>Compensation:</strong> %s</p>"
+        '<p class="popularity">%d student(s) favored this.</p>'
+        '<div class="rich">%s</div>'
+    ) % (
+        templates.esc(session["name"]), mentor_html, project["positions"],
+        templates.esc(project["comp_type"]), favs,
+        project["description"],  # already sanitized at write time
+    )
+    return html_response(templates.layout(project["title"], templates.page(templates.esc(project["title"]), body), ctx.user))
+
+
+def _project_to_values(conn, project):
+    elig = db.project_eligible_major_ids(conn, project["id"])
+    mentors = db.project_mentors(conn, project["id"])
+    pi = next((m for m in mentors if m["is_pi"]), None)
+    co = [str(m["user_id"]) for m in mentors if not m["is_pi"]]
+    answers = db.get_project_answers(conn, project["id"])
+    values = {
+        "title": project["title"],
+        "pi_id": str(pi["user_id"]) if pi else "",
+        "mentor_ids": co,
+        "primary_department_id": project["primary_department_id"] or "",
+        "description_html": project["description"],
+        "background": project["background"],
+        "responsibilities": project["responsibilities"],
+        "is_group": project["is_group"],
+        "positions": str(project["positions"]),
+        "noncitizen_eligible": bool(project["noncitizen_eligible"]),
+        "comp_type": project["comp_type"],
+        "credit_option": project["credit_option"],
+        "course_name": project["course_name"],
+        "hourly_rate": project["hourly_rate"] if project["hourly_rate"] is not None else "",
+        "cap_kind": project["cap_kind"],
+        "cap_value": project["cap_value"] if project["cap_value"] is not None else "",
+        "major_policy": project["major_policy"],
+        "eligible_majors": elig,
+        "alert_on_preference": project["alert_on_preference"],
+        "alert_scope": project["alert_scope"],
+    }
+    for qid, body in answers.items():
+        values["q_%d" % qid] = body
+    return values
+
+
+@route("POST", "/projects/{id}")
+def project_update(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    pid = fint_param(ctx, "id")
+    project = db.get_project(ctx.conn, pid) if pid else None
+    if project is None:
+        return not_found("Project not found.")
+    session = db.get_session(ctx.conn, project["session_id"])
+    if not _can_edit_project(ctx, project):
+        return forbidden("You cannot edit this project.")
+    if phase_locked(session, "faculty_project"):
+        return forbidden("The project submission deadline has passed.")
+
+    values = _read_project_form(ctx.form)
+    finalize = fv(ctx.form, "action", "publish") == "publish"
+    errors, warnings, positions = _validate_project(values, finalize)
+    if errors:
+        return html_response(_project_form(ctx, session, values, errors, project=project), 400)
+    status = "published" if finalize else project["status"]
+    _save_project(ctx.conn, session, values, positions, status, project_id=project["id"])
+    for q in db.list_questions(ctx.conn, session["id"], "project"):
+        db.upsert_answer(ctx.conn, q["id"], fv(ctx.form, "q_%d" % q["id"]), project_id=project["id"])
+    ctx.conn.commit()
+    return redirect("/projects/%d" % project["id"])
+
+
+@route("POST", "/projects/{id}/autosave")
+def project_autosave(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    pid = fint_param(ctx, "id")
+    project = db.get_project(ctx.conn, pid) if pid else None
+    if project is None:
+        return _json(404, {"ok": False, "error": "not found"})
+    if not _can_edit_project(ctx, project):
+        return _json(403, {"ok": False, "error": "forbidden"})
+    session = db.get_session(ctx.conn, project["session_id"])
+    values = _read_project_form(ctx.form)
+    _errors, _warn, positions = _validate_project(values, finalize=False)
+    _save_project(ctx.conn, session, values, positions, project["status"], project_id=project["id"])
+    for q in db.list_questions(ctx.conn, session["id"], "project"):
+        db.upsert_answer(ctx.conn, q["id"], fv(ctx.form, "q_%d" % q["id"]), project_id=project["id"])
+    ctx.conn.commit()
+    return _json(200, {"ok": True, "saved_at": db.utcnow()})
+
+
+def _json(status, obj):
+    import json
+    return Response(status=status, body=json.dumps(obj),
+                    content_type="application/json; charset=utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Student profile (R4)
+# ---------------------------------------------------------------------------
+
+def _profile_form(ctx, session, values, errors=None, profile=None):
+    errors = errors or {}
+    csrf = templates.csrf_input(ctx.user["csrf_token"])
+    action = "/sessions/%d/profile" % session["id"]
+    profile_id = profile["id"] if profile else 0
+    autosave_attr = ' data-autosave="/profile/%d/autosave"' % profile_id if profile_id else ""
+    questions = db.list_questions(ctx.conn, session["id"], "profile")
+
+    def err(name):
+        return templates.field_error(errors.get(name))
+
+    q_html = "".join(
+        templates.textarea("Q: %s" % q["prompt"], "q_%d" % q["id"],
+                           values.get("q_%d" % q["id"], ""), max_words=q["max_words"], rows=3)
+        for q in questions
+    )
+    time_kind = values.get("time_kind", "credit")
+    body = (
+        "%s"
+        '<form method="post" action="%s" class="stacked" id="profile-form"%s>'
+        "%s"
+        '<div aria-live="polite" class="autosave-status" id="autosave-status"></div>'
+        "%s"  # email
+        "%s"  # given name
+        "%s"  # family name
+        '<fieldset><legend>Majors</legend>'
+        "<p>Primary / secondary majors and minors (check all that apply):</p>%s</fieldset>"
+        '<fieldset><legend>Available time</legend>'
+        '<p class="field"><label for="f-time_kind">Type</label>'
+        '<select id="f-time_kind" name="time_kind" data-time-toggle>'
+        '<option value="credit"%s>credit</option><option value="pay"%s>pay</option></select></p>'
+        '<div class="time-credit"><p class="field"><label for="f-credit_option">Credit option</label>'
+        '<select id="f-credit_option" name="credit_option">%s</select>'
+        '<span class="hint">1 credit ~= 3 hours.</span></p></div>'
+        '<div class="time-pay"><p class="field"><label for="f-pay_hours">Pay hours / week (max 20)</label>'
+        '<input id="f-pay_hours" name="pay_hours" type="number" min="0" max="20" value="%s" data-payhours>'
+        '<span class="hint" data-payhours-warn></span></p></div>'
+        "</fieldset>"
+        "%s"  # interests
+        "%s"  # background
+        "%s"  # programming
+        "%s"  # custom questions
+        '<p><button type="submit" name="action" value="submit">Submit profile</button> '
+        '<button type="submit" name="action" value="draft" class="secondary">Save draft</button></p>'
+        "</form>"
+    ) % (
+        '<p class="error" role="alert">%s</p>' % templates.esc(errors["_form"]) if errors.get("_form") else "",
+        action, autosave_attr, csrf,
+        templates.field("Email", "email", "email", values.get("email", ""), required=True) + err("email"),
+        templates.field("Given (first) name", "given_name", "text", values.get("given_name", ""), required=True) + err("given_name"),
+        templates.field("Family (last) name", "family_name", "text", values.get("family_name", ""), required=True) + err("family_name"),
+        _profile_major_checkboxes(ctx.conn, values),
+        " selected" if time_kind == "credit" else "", " selected" if time_kind == "pay" else "",
+        "".join('<option value="%s"%s>%s</option>'
+                % (c, " selected" if values.get("credit_option") == c else "", c) for c in CREDIT_OPTIONS),
+        templates.esc(values.get("pay_hours", "")),
+        templates.textarea("Interests (<=250 words)", "interests", values.get("interests", ""), max_words=250, rows=5) + err("interests"),
+        templates.textarea("Background (<=100 words)", "background", values.get("background", ""), max_words=100, rows=3),
+        templates.textarea("Programming experience (<=100 words)", "programming", values.get("programming", ""), max_words=100, rows=3),
+        q_html,
+    )
+    heading = "Your profile for %s" % session["name"]
+    return templates.layout("My profile", templates.page(templates.esc(heading), body), ctx.user)
+
+
+def _profile_major_checkboxes(conn, values):
+    rows = db.list_majors(conn)
+    selected = values.get("majors_map", {})  # major_id -> kind
+    parts = []
+    for r in rows:
+        current = selected.get(r["id"], "")
+        opts = "".join(
+            '<option value="%s"%s>%s</option>'
+            % (k, " selected" if current == k else "", k or "-- not selected --")
+            for k in ("", "major", "secondary", "minor")
+        )
+        parts.append(
+            '<label class="major-row">%s '
+            '<select name="major_kind_%d">%s</select></label>'
+            % (templates.esc(r["name"]), r["id"], opts)
+        )
+    return '<div class="checkgroup">%s</div>' % "".join(parts)
+
+
+def _read_profile_form(conn, f):
+    majors_map = {}
+    for r in db.list_majors(conn):
+        kind = fv(f, "major_kind_%d" % r["id"])
+        if kind in ("major", "secondary", "minor"):
+            majors_map[r["id"]] = kind
+    return {
+        "email": fv(f, "email"),
+        "given_name": fv(f, "given_name"),
+        "family_name": fv(f, "family_name"),
+        "majors_map": majors_map,
+        "time_kind": fv(f, "time_kind", "credit"),
+        "credit_option": fv(f, "credit_option"),
+        "pay_hours": fv(f, "pay_hours"),
+        "interests": fv(f, "interests"),
+        "background": fv(f, "background"),
+        "programming": fv(f, "programming"),
+    }
+
+
+def _validate_profile(values, finalize):
+    errors = {}
+    warnings = []
+    if values["pay_hours"]:
+        try:
+            ph = int(values["pay_hours"])
+            if ph > 20:
+                errors["_form"] = "Pay hours cannot exceed 20 per week."
+            elif ph > 10:
+                warnings.append("More than 10 hours per week (%d) may be a heavy load." % ph)
+        except ValueError:
+            errors["_form"] = "Pay hours must be a whole number."
+    if sanitize.word_count(values["interests"]) > 250:
+        errors["interests"] = "Interests exceeds 250 words."
+    if finalize:
+        if not values["email"] or "@" not in values["email"]:
+            errors["email"] = "A valid email is required."
+        if not values["given_name"]:
+            errors["given_name"] = "Given name is required."
+        if not values["family_name"]:
+            errors["family_name"] = "Family name is required."
+        if not values["interests"]:
+            errors["interests"] = "Please describe your interests."
+    return errors, warnings
+
+
+def _save_profile(conn, session, user_id, values, submitted, profile_id=None):
+    pay_hours = None
+    if values["pay_hours"]:
+        try:
+            pay_hours = int(values["pay_hours"])
+        except ValueError:
+            pay_hours = None
+    cols = {
+        "email": values["email"],
+        "given_name": values["given_name"],
+        "family_name": values["family_name"],
+        "time_kind": values["time_kind"],
+        "credit_option": values["credit_option"],
+        "pay_hours": pay_hours,
+        "interests": values["interests"],
+        "background": values["background"],
+        "programming": values["programming"],
+        "bio": values["interests"][:500],
+        "submitted": submitted,
+    }
+    if profile_id is None:
+        profile_id = db.insert(conn, "student_profiles", user_id=user_id,
+                               session_id=session["id"], updated_at=db.utcnow(), **cols)
+    else:
+        db.update_profile(conn, profile_id, **cols)
+    items = [(mid, kind) for mid, kind in values["majors_map"].items()]
+    db.set_profile_majors(conn, profile_id, items)
+    return profile_id
+
+
+@route("GET", "/sessions/{id}/profile")
+def profile_get(ctx):
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    profile = db.get_profile_for_user(ctx.conn, session["id"], ctx.user["id"])
+    if profile is None:
+        # Autopopulate from the account (R4.2).
+        majors_map = {}
+        values = {
+            "email": ctx.user["email"],
+            "given_name": ctx.user["given_name"],
+            "family_name": ctx.user["family_name"],
+            "majors_map": majors_map,
+            "time_kind": "credit",
+        }
+        return html_response(_profile_form(ctx, session, values))
+    values = _profile_to_values(ctx.conn, profile)
+    return html_response(_profile_form(ctx, session, values, profile=profile))
+
+
+def _profile_to_values(conn, profile):
+    majors_map = {}
+    for r in conn.execute(
+            "SELECT major_id, kind FROM profile_majors WHERE profile_id = ?",
+            (profile["id"],)).fetchall():
+        majors_map[r["major_id"]] = r["kind"]
+    values = {
+        "email": profile["email"],
+        "given_name": profile["given_name"],
+        "family_name": profile["family_name"],
+        "majors_map": majors_map,
+        "time_kind": profile["time_kind"],
+        "credit_option": profile["credit_option"],
+        "pay_hours": profile["pay_hours"] if profile["pay_hours"] is not None else "",
+        "interests": profile["interests"],
+        "background": profile["background"],
+        "programming": profile["programming"],
+    }
+    for qid, body in db.get_profile_answers(conn, profile["id"]).items():
+        values["q_%d" % qid] = body
+    return values
+
+
+@route("POST", "/sessions/{id}/profile")
+def profile_post(ctx):
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    if phase_locked(session, "student_profile"):
+        return forbidden("The profile deadline has passed.")
+
+    profile = db.get_profile_for_user(ctx.conn, session["id"], ctx.user["id"])
+    values = _read_profile_form(ctx.conn, ctx.form)
+    finalize = fv(ctx.form, "action", "submit") == "submit"
+    errors, warnings = _validate_profile(values, finalize)
+    if errors:
+        return html_response(_profile_form(ctx, session, values, errors, profile=profile), 400)
+    submitted = 1 if finalize else (profile["submitted"] if profile else 0)
+    profile_id = _save_profile(ctx.conn, session, ctx.user["id"], values, submitted,
+                               profile_id=profile["id"] if profile else None)
+    for q in db.list_questions(ctx.conn, session["id"], "profile"):
+        db.upsert_answer(ctx.conn, q["id"], fv(ctx.form, "q_%d" % q["id"]), profile_id=profile_id)
+    ctx.conn.commit()
+    flash = "Profile submitted." if finalize else "Draft saved."
+    return redirect("/sessions/%d/browse?msg=%s" % (session["id"], "submitted" if finalize else "draft"))
+
+
+@route("POST", "/profile/{id}/autosave")
+def profile_autosave(ctx):
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    pid = fint_param(ctx, "id")
+    profile = db.get_profile(ctx.conn, pid) if pid else None
+    if profile is None or profile["user_id"] != ctx.user["id"]:
+        return _json(403, {"ok": False, "error": "forbidden"})
+    session = db.get_session(ctx.conn, profile["session_id"])
+    values = _read_profile_form(ctx.conn, ctx.form)
+    _save_profile(ctx.conn, session, ctx.user["id"], values, profile["submitted"], profile_id=profile["id"])
+    for q in db.list_questions(ctx.conn, session["id"], "profile"):
+        db.upsert_answer(ctx.conn, q["id"], fv(ctx.form, "q_%d" % q["id"]), profile_id=profile["id"])
+    ctx.conn.commit()
+    return _json(200, {"ok": True, "saved_at": db.utcnow()})
+
+
+# ---------------------------------------------------------------------------
+# Browsing / favorites / preferencing (R5)
+# ---------------------------------------------------------------------------
+
+def _student_browse(ctx, session):
+    q = fv(ctx.query, "q")
+    major_id = fint(ctx.query, "major")
+    broader = fv(ctx.query, "mode") == "broader"
+    fit_only = fv(ctx.query, "fit") != "all"  # default "fits my major(s)"
+
+    my_profile = db.get_profile_for_user(ctx.conn, session["id"], ctx.user["id"])
+    my_major_ids = set(db.profile_major_ids(ctx.conn, my_profile["id"])) if my_profile else set()
+    if broader:
+        my_major_ids = my_major_ids | db.related_major_ids(ctx.conn, my_major_ids)
+
+    projects = db.list_published_projects(ctx.conn, session["id"])
+    favs = db.favorite_project_ids(ctx.conn, ctx.user["id"])
+    rows = []
+    for p in projects:
+        elig = set(db.project_eligible_major_ids(ctx.conn, p["id"]))
+        if q and q.lower() not in (p["title"] or "").lower() and q.lower() not in (p["description"] or "").lower():
+            continue
+        if major_id is not None:
+            match_set = {major_id}
+            if broader:
+                match_set |= db.related_major_ids(ctx.conn, {major_id})
+            if not (elig & match_set):
+                continue
+        if fit_only and my_major_ids and elig and not (elig & my_major_ids):
+            continue
+        favored = p["id"] in favs
+        count = db.favorite_count(ctx.conn, p["id"])
+        fav_btn = (
+            '<form method="post" action="/favorites" class="inline">%s'
+            '<input type="hidden" name="session_id" value="%d">'
+            '<input type="hidden" name="project_id" value="%d">'
+            '<input type="hidden" name="op" value="%s">'
+            '<button type="submit">%s</button></form>'
+            % (templates.csrf_input(ctx.user["csrf_token"]), session["id"], p["id"],
+               "remove" if favored else "add", "Unfavorite" if favored else "Favorite")
+        )
+        rows.append(
+            "<tr><td data-label=\"Project\"><a href=\"/projects/%d\">%s</a></td>"
+            "<td data-label=\"Favorited by\">%d</td><td data-label=\"\">%s</td></tr>"
+            % (p["id"], templates.esc(p["title"]), count, fav_btn)
+        )
+    table = ("<table><thead><tr><th>Project</th><th>Favorited by</th><th></th></tr></thead>"
+             "<tbody>%s</tbody></table>" % "".join(rows)) if rows else "<p>No matching projects.</p>"
+
+    major_opts = "".join(
+        '<option value="%d"%s>%s</option>'
+        % (m["id"], " selected" if major_id == m["id"] else "", templates.esc(m["name"]))
+        for m in db.list_majors(ctx.conn)
+    )
+    controls = (
+        '<form method="get" class="filters">'
+        '<p class="field"><label for="f-q">Keyword</label><input id="f-q" name="q" value="%s"></p>'
+        '<p class="field"><label for="f-major">Major / department</label>'
+        '<select id="f-major" name="major"><option value="">any</option>%s</select></p>'
+        '<p class="field check"><label><input type="checkbox" name="mode" value="broader"%s> Broader (related majors)</label></p>'
+        '<p class="field check"><label><input type="checkbox" name="fit" value="all"%s> Show all (ignore my majors)</label></p>'
+        '<p><button type="submit">Search</button></p></form>'
+    ) % (templates.esc(q), major_opts, " checked" if broader else "",
+         " checked" if not fit_only else "")
+
+    pref_link = ('<p><a class="button-link" href="/sessions/%d/preferences">Rank my favorites &amp; submit</a></p>'
+                 % session["id"])
+    note = ('<p class="hint">Preferencing is optional in %s-preference sessions, '
+            "but ranking your favorites improves your match (R5.9).</p>"
+            % templates.esc(session["mode"]))
+    body = controls + note + pref_link + table
+    return html_response(templates.layout("Browse projects", templates.page("Browse projects", body), ctx.user))
+
+
+def _faculty_browse(ctx, session):
+    q = fv(ctx.query, "q")
+    scope = fv(ctx.query, "scope", "all")  # 'all' | 'favorited'
+    project_id = fint(ctx.query, "project")
+
+    my_projects = [p for p in db.list_projects(ctx.conn, session["id"])
+                   if db.is_project_mentor(ctx.conn, p["id"], ctx.user["id"])]
+    favorited_students = set()
+    if scope == "favorited" and project_id:
+        favorited_students = {r["user_id"] for r in db.students_who_favorited(ctx.conn, project_id)}
+
+    profiles = db.list_submitted_profiles(ctx.conn, session["id"])
+    rows = []
+    for p in profiles:
+        name = "%s %s" % (p["given_name"], p["family_name"])
+        if q and q.lower() not in name.lower() and q.lower() not in (p["interests"] or "").lower():
+            continue
+        if scope == "favorited" and p["user_id"] not in favorited_students:
+            continue
+        rows.append(
+            "<tr><td data-label=\"Student\">%s</td><td data-label=\"Interests\">%s</td></tr>"
+            % (templates.esc(name or p["display_name"]), templates.esc((p["interests"] or "")[:120]))
+        )
+    table = ("<table><thead><tr><th>Student</th><th>Interests</th></tr></thead><tbody>%s</tbody></table>"
+             % "".join(rows)) if rows else "<p>No matching students.</p>"
+
+    proj_opts = "".join(
+        '<option value="%d"%s>%s</option>'
+        % (p["id"], " selected" if project_id == p["id"] else "", templates.esc(p["title"]))
+        for p in my_projects
+    )
+    controls = (
+        '<form method="get" class="filters">'
+        '<p class="field"><label for="f-q">Keyword</label><input id="f-q" name="q" value="%s"></p>'
+        '<p class="field"><label for="f-scope">Scope</label>'
+        '<select id="f-scope" name="scope"><option value="all"%s>Entire undergraduate pool</option>'
+        '<option value="favorited"%s>Only students who favorited my project</option></select></p>'
+        '<p class="field"><label for="f-project">My project (for favorited scope)</label>'
+        '<select id="f-project" name="project"><option value="">--</option>%s</select></p>'
+        '<p><button type="submit">Search</button></p></form>'
+    ) % (templates.esc(q), " selected" if scope == "all" else "",
+         " selected" if scope == "favorited" else "", proj_opts)
+    return html_response(templates.layout("Browse students", templates.page("Browse students", controls + table), ctx.user))
+
+
+@route("GET", "/sessions/{id}/browse")
+def browse(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    if ctx.user["role"] == "student":
+        return _student_browse(ctx, session)
+    if ctx.user["role"] in ("faculty", "admin", "manager"):
+        return _faculty_browse(ctx, session)
+    return forbidden("Browsing is not available for your role.")
+
+
+@route("POST", "/favorites")
+def favorites_post(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session_id = fint(ctx.form, "session_id")
+    project_id = fint(ctx.form, "project_id")
+    op = fv(ctx.form, "op", "add")
+    if session_id is None or project_id is None:
+        return redirect("/")
+    session = db.get_session(ctx.conn, session_id)
+    project = db.get_project(ctx.conn, project_id)
+    if session is None or project is None or project["session_id"] != session_id:
+        return not_found("Not found.")
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+
+    if op == "remove":
+        db.remove_favorite(ctx.conn, ctx.user["id"], project_id)
+    else:
+        db.add_favorite(ctx.conn, ctx.user["id"], project_id)
+        # R5.5: optionally notify the project's mentors when invites are on.
+        if session["favorite_invites"]:
+            for m in db.project_mentors(ctx.conn, project_id):
+                notify_service.notify(
+                    ctx.conn, m["user_id"], kind="favorite_invite",
+                    subject="A student favorited your project",
+                    body="%s favorited '%s'." % (ctx.user["display_name"], project["title"]))
+    ctx.conn.commit()
+    return redirect("/sessions/%d/browse" % session_id)
+
+
+def _preferences_page(ctx, session, msg=None):
+    favs = db.list_favorites(ctx.conn, ctx.user["id"], session["id"])
+    current = db.get_preferences(ctx.conn, session["id"], "student", student_id=ctx.user["id"])
+    order = [r["project_id"] for r in current]
+    # Favorites not yet ranked are appended.
+    ranked_ids = set(order)
+    fav_by_id = {p["id"]: p for p in favs}
+    for p in favs:
+        if p["id"] not in ranked_ids:
+            order.append(p["id"])
+
+    items = []
+    for idx, pid in enumerate(order):
+        p = fav_by_id.get(pid)
+        if p is None:
+            continue
+        items.append(
+            '<li class="rank-item" draggable="true" data-pid="%d">'
+            '<span class="rank-handle" aria-hidden="true">::</span> %s '
+            '<input type="hidden" name="order" value="%d">'
+            '<button type="button" class="rank-up" aria-label="Move up">Up</button>'
+            '<button type="button" class="rank-down" aria-label="Move down">Down</button>'
+            "</li>" % (pid, templates.esc(p["title"]), pid)
+        )
+    ranked_list = ('<ol class="rank-list" id="rank-list">%s</ol>' % "".join(items)
+                   if items else "<p>Favorite some projects first, then rank them here.</p>")
+
+    submitted = bool(current)
+    locked = phase_locked(session, "student_preference")
+    state = ""
+    if msg == "saved":
+        state = '<p class="flash" role="status">Preferences saved.</p>'
+    deadline = session["deadline_student_preference"]
+    deadline_msg = ("<p>Preference deadline: %s</p>" % templates.tz_label(deadline, session["timezone"])) if deadline else ""
+    status_line = ""
+    if submitted:
+        status_line = '<p class="pill">Submitted (%d ranked). You can edit while the deadline is open.</p>' % len(current)
+    if locked:
+        status_line += '<p class="error">The preference deadline has passed; your list is read-only.</p>'
+
+    buttons = ""
+    if not locked:
+        buttons = (
+            '<p><button type="submit" name="action" value="save">Save order</button> '
+            '<button type="submit" name="action" value="submit">Submit preferences</button></p>'
+        )
+    body = (
+        "%s%s%s"
+        '<form method="post" action="/preferences" id="pref-form">'
+        "%s<input type=\"hidden\" name=\"session_id\" value=\"%d\">"
+        "%s%s</form>"
+    ) % (state, deadline_msg, status_line,
+         templates.csrf_input(ctx.user["csrf_token"]), session["id"],
+         ranked_list, buttons)
+    return html_response(templates.layout("My preferences", templates.page("Rank your favorites", body), ctx.user))
+
+
+@route("GET", "/sessions/{id}/preferences")
+def preferences_get(ctx):
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    return _preferences_page(ctx, session, msg=fv(ctx.query, "msg"))
+
+
+@route("POST", "/preferences")
+def preferences_post(ctx):
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session_id = fint(ctx.form, "session_id")
+    session = db.get_session(ctx.conn, session_id) if session_id else None
+    if session is None:
+        return not_found("Session not found.")
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    if phase_locked(session, "student_preference"):
+        return forbidden("The preference deadline has passed.")
+
+    order = [int(x) for x in fvlist(ctx.form, "order") if x.isdigit()]
+    # Only keep projects the student actually favorited in this session.
+    fav_ids = {p["id"] for p in db.list_favorites(ctx.conn, ctx.user["id"], session_id)}
+    order = [pid for pid in order if pid in fav_ids]
+    db.replace_student_preferences(ctx.conn, session_id, ctx.user["id"], order)
+    ctx.conn.commit()
+    action = fv(ctx.form, "action", "save")
+    if action == "submit":
+        return redirect("/preferences/submit?session_id=%d" % session_id)
+    return redirect("/sessions/%d/preferences?msg=saved" % session_id)
+
+
+@route("GET", "/preferences/submit")
+def preferences_submit_get(ctx):
+    # Submitting is also reachable via POST redirect; show confirmation.
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    session_id = fint(ctx.query, "session_id")
+    session = db.get_session(ctx.conn, session_id) if session_id else None
+    if session is None:
+        return not_found("Session not found.")
+    current = db.get_preferences(ctx.conn, session_id, "student", student_id=ctx.user["id"])
+    deadline = session["deadline_student_preference"]
+    body = (
+        '<p class="flash" role="status">Your %d ranked preference(s) are submitted to the matching algorithm.</p>'
+        "<p>Deadline: %s. You may edit your list until then.</p>"
+        '<p><a href="/sessions/%d/preferences">Edit preferences</a> &middot; '
+        '<a href="/sessions/%d/browse">Back to browse</a></p>'
+    ) % (len(current), templates.tz_label(deadline, session["timezone"]),
+         session_id, session_id)
+    return html_response(templates.layout("Preferences submitted", templates.page("Preferences submitted", body), ctx.user))
+
+
+@route("POST", "/preferences/submit")
+def preferences_submit_post(ctx):
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session_id = fint(ctx.form, "session_id")
+    return redirect("/preferences/submit?session_id=%d" % session_id if session_id else "/")
 
 
 # ---------------------------------------------------------------------------

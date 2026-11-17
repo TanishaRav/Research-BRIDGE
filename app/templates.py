@@ -100,3 +100,50 @@ def csrf_input(csrf_token):
 def error_page(status, title, message):
     """Standalone error page body (used for 404/500)."""
     return page("%s %s" % (status, title), '<p class="error">%s</p>' % esc(message))
+
+
+def textarea(label, name, value="", max_words=None, rows=4, required=False, hint=None):
+    """Labelled textarea with optional word-count cap and spellcheck (R3.5)."""
+    wc = ' data-wordcount="%s"' % int(max_words) if max_words else ""
+    req = " required" if required else ""
+    hint_html = '<span class="hint">%s</span>' % esc(hint) if hint else ""
+    return (
+        '<p class="field"><label for="f-%s">%s</label>%s'
+        '<textarea id="f-%s" name="%s" rows="%d" spellcheck="true"%s%s>%s</textarea></p>'
+        % (esc(name), esc(label), hint_html, esc(name), esc(name), int(rows),
+           wc, req, esc(value))
+    )
+
+
+def field_error(message):
+    """Inline field-level error message (R3.10, R4.6)."""
+    if not message:
+        return ""
+    return '<span class="field-error" role="alert">%s</span>' % esc(message)
+
+
+def tz_label(iso_value, tz_name):
+    """Render an ISO-8601 timestamp with an explicit timezone label (R13.3).
+
+    `iso_value` is a stored ISO string (may carry an offset) or empty; `tz_name`
+    is the session's IANA zone. Falls back gracefully if parsing fails.
+    """
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception:  # pragma: no cover - zoneinfo always present on 3.11
+        ZoneInfo = None
+    if not iso_value:
+        return '<span class="muted">not set</span>'
+    try:
+        dt = datetime.fromisoformat(iso_value)
+        if ZoneInfo is not None and tz_name:
+            try:
+                dt = dt.astimezone(ZoneInfo(tz_name))
+            except Exception:
+                pass
+        label = dt.strftime("%Y-%m-%d %H:%M")
+        zone = tz_name or (dt.tzname() or "UTC")
+        return "%s <span class=\"tz\">(%s)</span>" % (esc(label), esc(zone))
+    except Exception:
+        return "%s <span class=\"tz\">(%s)</span>" % (esc(iso_value), esc(tz_name or "UTC"))
