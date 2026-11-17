@@ -1,0 +1,872 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Research Bridge — AWS Kiro Hackathon · Iowa State University</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700;9..144,900&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --cardinal:#C8102E; --cardinal-dk:#9d0a23; --cardinal-xdk:#5e0614;
+    --gold:#F1BE48; --gold-lt:#f8db96; --gold-dk:#cf9a29;
+    --ivory:#F8F6F0; --white:#FFFFFF; --ink:#222222; --ink-soft:#5a5551;
+    --head:"Fraunces",Georgia,serif; --body:"Inter","Segoe UI",sans-serif;
+    --ease:cubic-bezier(.22,.7,.2,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%;width:100%;overflow:hidden;background:#000;font-family:var(--body);color:var(--ink)}
+  .deck{position:fixed;inset:0;overflow:hidden}
+
+  /* 16:9 stage, letterboxed and scaled to viewport */
+  .stage-wrap{position:absolute;inset:0;display:grid;place-items:center;background:#0a0406}
+  .stage{position:relative;width:100vw;height:56.25vw;max-height:100vh;max-width:177.78vh;overflow:hidden;
+    box-shadow:0 0 120px rgba(0,0,0,.6)}
+
+  .slide{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;
+    padding:5.2% 6% 7%;opacity:0;visibility:hidden;transform:translateY(16px) scale(.995);
+    transition:opacity .5s var(--ease),transform .55s var(--ease),visibility .55s;overflow:hidden}
+  .slide.active{opacity:1;visibility:visible;transform:none;z-index:2}
+
+  /* ---------- backgrounds ---------- */
+  .bg-cardinal{background:
+     radial-gradient(120% 95% at 85% -15%,rgba(241,190,72,.26),transparent 55%),
+     radial-gradient(135% 125% at 8% 115%,var(--cardinal-xdk),transparent 60%),
+     linear-gradient(155deg,var(--cardinal) 0%,var(--cardinal-dk) 100%);color:#fff}
+  .bg-ivory{background:
+     radial-gradient(95% 75% at 102% -5%,rgba(241,190,72,.18),transparent 55%),
+     radial-gradient(70% 90% at -5% 105%,rgba(200,16,46,.07),transparent 55%),
+     linear-gradient(160deg,var(--ivory) 0%,#fff 72%)}
+  .bg-white{background:var(--white)}
+
+  /* ---------- corner logo (every slide) ---------- */
+  .corner{position:absolute;top:4%;left:4%;z-index:8;height:8%;width:auto;
+    filter:drop-shadow(0 4px 12px rgba(0,0,0,.14))}
+  .bg-cardinal .corner{background:#fff;padding:.5% .8%;border-radius:10px}
+  .is-hero .corner,.s3 .corner{display:none}
+
+  /* ---------- footer (every slide) ---------- */
+  .footer{position:absolute;left:4%;right:4%;bottom:3.2%;z-index:8;display:flex;justify-content:space-between;
+    align-items:center;font-size:.86rem;letter-spacing:.4px;color:var(--ink-soft);opacity:.85;font-weight:500;
+    pointer-events:none}
+  .bg-cardinal .footer{color:rgba(255,255,255,.72)}
+  .footer .num{font-variant-numeric:tabular-nums;font-weight:700}
+
+  /* ---------- reveal system ---------- */
+  .slide.active .r{animation:rise .62s var(--ease) both}
+  .slide.active .r:nth-child(1){animation-delay:.04s}
+  .slide.active .r:nth-child(2){animation-delay:.12s}
+  .slide.active .r:nth-child(3){animation-delay:.2s}
+  .slide.active .r:nth-child(4){animation-delay:.28s}
+  .slide.active .r:nth-child(5){animation-delay:.36s}
+  .slide.active .r:nth-child(6){animation-delay:.44s}
+  .slide.active .r:nth-child(7){animation-delay:.52s}
+  .r1{animation-delay:.08s!important} .r2{animation-delay:.2s!important} .r3{animation-delay:.32s!important}
+  .r4{animation-delay:.44s!important} .r5{animation-delay:.56s!important} .r6{animation-delay:.68s!important}
+  @keyframes rise{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+
+  h1,h2,h3,h4{font-family:var(--head);font-weight:900;line-height:1.04;letter-spacing:-.01em}
+
+  .kicker{text-transform:uppercase;letter-spacing:.28em;font-weight:700;font-size:.82rem;
+    color:var(--cardinal);margin-bottom:2.4%;display:flex;align-items:center;gap:14px;font-family:var(--body)}
+  .kicker::before{content:"";width:34px;height:3px;background:var(--gold);border-radius:3px;flex:none}
+  .bg-cardinal .kicker{color:var(--gold)}
+
+  .lead{font-size:clamp(28px,3.9vw,58px);max-width:20ch;line-height:1.05}
+  .lead .hl{color:var(--cardinal)} .bg-cardinal .lead .hl{color:var(--gold)}
+  .sub{font-size:clamp(15px,1.55vw,22px);color:var(--ink-soft);font-weight:300;max-width:46ch;margin-top:2.4%;line-height:1.5}
+  .bg-cardinal .sub{color:rgba(255,255,255,.88)}
+
+  /* ============ SLIDE 1 — TITLE ============ */
+  .s1{align-items:center;text-align:center;padding-top:6%}
+  .s1 .hero-bg{position:absolute;inset:0;z-index:0;opacity:.5}
+  .s1 .logo-hero{height:clamp(96px,17vh,180px);background:#fff;padding:2.4% 3.2%;border-radius:22px;
+    filter:drop-shadow(0 22px 54px rgba(0,0,0,.45));margin-bottom:3%}
+  .s1 .wordmark{font-family:var(--head);font-weight:900;color:#fff;font-size:clamp(40px,6.6vw,104px);
+    letter-spacing:-.02em;line-height:.95;text-shadow:0 10px 40px rgba(0,0,0,.3)}
+  .s1 .wordmark .amp{color:var(--gold)}
+  .s1 .tagline{font-family:var(--head);font-weight:600;font-style:italic;color:var(--gold-lt);
+    font-size:clamp(18px,2.3vw,34px);margin-top:2%}
+  .s1 .brandline{text-transform:uppercase;letter-spacing:.24em;font-size:clamp(10px,1.05vw,14px);
+    color:rgba(255,255,255,.7);font-weight:600;margin-top:1.8%}
+  .s1 .credits{display:flex;gap:clamp(24px,5vw,80px);justify-content:center;align-items:flex-start;margin-top:4.2%;z-index:3}
+  .s1 .credits .col .h{text-transform:uppercase;letter-spacing:.22em;font-size:.72rem;color:var(--gold);
+    font-weight:700;margin-bottom:1.1vh}
+  .s1 .credits .names{display:flex;flex-direction:column;gap:.3vh;color:#fff;font-weight:500;font-size:clamp(13px,1.4vw,19px)}
+  .s1 .credits .champ{color:#fff;font-weight:600;font-size:clamp(14px,1.5vw,21px)}
+  .s1 .credits .divider{width:1px;align-self:stretch;background:linear-gradient(180deg,transparent,rgba(241,190,72,.6),transparent)}
+  .s1 .event{position:absolute;bottom:8.5%;left:0;right:0;display:flex;gap:1.1vw;justify-content:center;
+    font-size:clamp(11px,1.2vw,16px);color:rgba(255,255,255,.72);letter-spacing:.05em;font-weight:500;z-index:3}
+  .s1 .event b{color:var(--gold-lt);font-weight:700}
+  .s1 .event .dot{color:var(--gold);opacity:.65}
+
+  /* ============ SLIDE 2 — OPPORTUNITY VS ACCESS ============ */
+  .s2 .grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:3.4%;align-items:center;margin-top:1.8%}
+  .bigstat{font-family:var(--head);font-weight:900;color:var(--cardinal);font-size:clamp(52px,7.8vw,112px);
+    line-height:.84;letter-spacing:-.03em;text-shadow:0 14px 40px rgba(200,16,46,.14)}
+  .bigstat .r1tag{display:inline-block;font-family:var(--body);font-weight:800;font-size:.16em;letter-spacing:.14em;
+    background:var(--cardinal);color:#fff;padding:.5em .8em;border-radius:999px;vertical-align:middle;margin-bottom:.5em;letter-spacing:.14em}
+  .bigstat small{display:block;font-family:var(--body);font-weight:600;font-size:.135em;letter-spacing:.02em;
+    color:var(--ink-soft);margin-top:.5em;line-height:1.3}
+  .bigstat cite{display:block;font-family:var(--body);font-style:normal;font-weight:500;font-size:.085em;
+    letter-spacing:.01em;color:#978f88;margin-top:.9em}
+  .benefits{display:grid;grid-template-columns:1fr 1fr;gap:2.2%}
+  .ben{background:#fff;border-radius:16px;padding:3.4% 4.4%;box-shadow:0 10px 28px rgba(34,34,34,.07);
+    border-top:4px solid var(--gold);transition:transform .3s var(--ease),box-shadow .3s var(--ease)}
+  .ben:hover{transform:translateY(-4px);box-shadow:0 16px 36px rgba(34,34,34,.12)}
+  .ben .ic{font-size:1.5rem;margin-bottom:.6vh;display:block}
+  .ben h4{font-size:clamp(14px,1.4vw,20px);color:var(--cardinal);margin-bottom:.5vh;font-family:var(--body);font-weight:800;letter-spacing:-.01em}
+  .ben p{font-size:clamp(11px,1.12vw,15px);color:var(--ink-soft);font-weight:300;line-height:1.4}
+
+  .disconnect{margin-top:2.2%;display:grid;grid-template-columns:1fr auto 1fr;gap:2.4%;align-items:stretch}
+  .side{background:rgba(255,255,255,.55);border-radius:16px;padding:2.6% 2.8%;backdrop-filter:blur(2px)}
+  .side.fac{text-align:right}
+  .side .lab{display:flex;align-items:center;gap:10px;text-transform:uppercase;letter-spacing:.2em;font-weight:800;
+    font-size:.78rem;color:var(--cardinal);margin-bottom:1.4vh}
+  .side.fac .lab{justify-content:flex-end;color:var(--cardinal-dk)}
+  .side ul{list-style:none;display:flex;flex-direction:column;gap:.55vh}
+  .side li{font-size:clamp(11px,1.12vw,15px);color:var(--ink-soft);font-weight:400;position:relative;padding-left:16px}
+  .side li::before{content:"";position:absolute;left:0;top:.62em;width:6px;height:6px;border-radius:50%;background:var(--gold)}
+  .side.fac li{padding-left:0;padding-right:16px}
+  .side.fac li::before{left:auto;right:0}
+  .gap-mid{display:grid;place-items:center;position:relative;min-width:clamp(80px,12vw,170px)}
+  .gap-mid svg{width:100%;height:auto}
+  .gap-mid .pier{stroke:var(--cardinal);stroke-width:5;stroke-linecap:round}
+  .gap-mid .deck-l,.gap-mid .deck-r{stroke:var(--cardinal);stroke-width:6;stroke-linecap:round}
+  .gap-mid .missing{stroke:var(--gold);stroke-width:6;stroke-dasharray:7 11;stroke-linecap:round;opacity:.9}
+  .gap-mid .gaptxt{text-transform:uppercase;letter-spacing:.18em;font-size:.66rem;font-weight:800;fill:var(--gold-dk)}
+  .takeaway2{margin-top:2.4%;text-align:center;font-family:var(--head);
+    font-weight:700;font-size:clamp(15px,1.85vw,27px);color:var(--cardinal)}
+  .takeaway2 b{color:var(--ink)}
+
+  /* ============ SLIDE 3 — MEET RESEARCH BRIDGE ============ */
+  .s3{justify-content:flex-start;padding-top:5%}
+  .s3 .top{display:grid;grid-template-columns:1fr 1fr;gap:4%;align-items:center}
+  .s3 .logo-feature{height:clamp(52px,8vh,90px);background:#fff;padding:1.2% 1.6%;border-radius:14px;
+    margin-bottom:2.4%;filter:drop-shadow(0 14px 34px rgba(0,0,0,.4))}
+  .s3 .heading h1{font-size:clamp(34px,5.1vw,78px);color:#fff}
+  .s3 .heading .tag{font-family:var(--head);font-weight:600;font-style:italic;color:var(--gold);
+    font-size:clamp(17px,2vw,30px);margin-top:1.6%}
+  .s3 .heading p{color:rgba(255,255,255,.85);font-weight:300;font-size:clamp(13px,1.35vw,19px);
+    margin-top:2.4%;max-width:40ch;line-height:1.5}
+  .bridge-reveal{position:relative;height:clamp(150px,24vh,250px)}
+  .bridge-reveal svg{width:100%;height:100%;overflow:visible}
+  .bridge-reveal .node{fill:#fff;stroke:var(--gold);stroke-width:3}
+  .bridge-reveal .node.c{fill:var(--gold);stroke:#fff}
+  .bridge-reveal .cable{fill:none;stroke:rgba(255,255,255,.35);stroke-width:2}
+  .bridge-reveal .arch{fill:none;stroke:var(--gold);stroke-width:5;stroke-linecap:round}
+  .bridge-reveal .road{fill:none;stroke:#fff;stroke-width:5;stroke-linecap:round}
+  .bridge-reveal .endlab{fill:#fff;font-family:var(--body);font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.14em}
+  .bridge-reveal .endlab.g{fill:var(--gold)}
+  .slide.active .bridge-reveal .draw{stroke-dasharray:var(--len,900);stroke-dashoffset:var(--len,900);
+    animation:draw 1.3s .5s var(--ease) forwards}
+  .slide.active .bridge-reveal .pop{opacity:0;animation:pop .5s ease forwards}
+  .bridge-reveal .pop:nth-of-type(1){animation-delay:1.1s} .bridge-reveal .pop:nth-of-type(2){animation-delay:1.25s}
+  @keyframes draw{to{stroke-dashoffset:0}} @keyframes pop{to{opacity:1}}
+
+  .s3 .flow{display:flex;align-items:center;justify-content:center;gap:1.6vw;margin:3% 0;z-index:3}
+  .s3 .flow .pill{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.3);border-radius:999px;
+    padding:1% 2.2%;font-weight:700;color:#fff;font-size:clamp(12px,1.4vw,20px);letter-spacing:.02em}
+  .s3 .flow .pill.mid{background:var(--gold);color:var(--cardinal-dk);border-color:var(--gold);
+    font-family:var(--head);font-weight:900}
+  .s3 .flow .arrow{color:var(--gold);font-size:clamp(16px,2vw,30px)}
+  .s3 .bottom{display:grid;grid-template-columns:1.15fr 1fr;gap:4%;align-items:stretch;margin-top:1%}
+  .acro{display:grid;grid-template-columns:repeat(6,1fr);gap:1.4%;align-self:center}
+  .acro .ltr{background:rgba(0,0,0,.14);border:1px solid rgba(241,190,72,.35);border-radius:12px;
+    padding:1.4vh .4vw;text-align:center}
+  .acro .ltr .b{font-family:var(--head);font-weight:900;font-size:clamp(20px,2.6vw,40px);color:var(--gold)}
+  .acro .ltr .w{font-size:clamp(9px,.92vw,13px);color:#fff;font-weight:600;margin-top:.3vh;letter-spacing:.02em}
+  .vprops{display:grid;grid-template-columns:repeat(3,1fr);gap:2.4%}
+  .vp{background:rgba(255,255,255,.95);border-radius:14px;padding:3% 3.4%;color:var(--ink);
+    transition:transform .3s var(--ease),box-shadow .3s var(--ease)}
+  .vp:hover{transform:translateY(-5px);box-shadow:0 16px 34px rgba(0,0,0,.28)}
+  .vp .h{font-family:var(--head);font-weight:900;color:var(--cardinal);font-size:clamp(16px,1.9vw,27px);margin-bottom:.6vh}
+  .vp p{font-size:clamp(10px,1.08vw,15px);color:var(--ink-soft);font-weight:300;line-height:1.38}
+
+  /* ============ SLIDE 4 — FEATURES ============ */
+  .s4 .head-row{display:flex;justify-content:space-between;align-items:flex-end;gap:3%}
+  .s4 h1{font-size:clamp(28px,4vw,56px)}
+  .s4 .head-row .sub{margin-top:0;max-width:34ch;text-align:right}
+  .fgrid{display:grid;grid-template-columns:repeat(3,1fr);grid-auto-rows:1fr;gap:2%;margin-top:3.2%}
+  .fcard{background:var(--white);border-radius:18px;padding:3.4% 3.2%;position:relative;overflow:hidden;
+    border:1px solid rgba(34,34,34,.07);box-shadow:0 10px 26px rgba(34,34,34,.06);
+    transition:transform .32s var(--ease),box-shadow .32s var(--ease),border-color .32s var(--ease);display:flex;flex-direction:column}
+  .fcard::after{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:linear-gradient(var(--cardinal),var(--gold));
+    transform:scaleY(0);transform-origin:top;transition:transform .35s var(--ease)}
+  .fcard:hover{transform:translateY(-6px);box-shadow:0 20px 44px rgba(200,16,46,.14);border-color:rgba(200,16,46,.2)}
+  .fcard:hover::after{transform:scaleY(1)}
+  .fcard .ic{width:2.8em;height:2.8em;border-radius:13px;background:linear-gradient(135deg,var(--cardinal),var(--cardinal-dk));
+    display:grid;place-items:center;color:#fff;margin-bottom:1.6vh;flex:none}
+  .fcard .ic svg{width:1.4em;height:1.4em;stroke:#fff;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .fcard .no{position:absolute;top:1.6vh;right:1.2vw;font-family:var(--head);font-weight:900;font-size:1.5rem;color:rgba(200,16,46,.1)}
+  .fcard h4{font-size:clamp(14px,1.55vw,22px);color:var(--ink);margin-bottom:.8vh;font-family:var(--body);font-weight:800;letter-spacing:-.01em}
+  .fcard p{font-size:clamp(11px,1.14vw,16px);color:var(--ink-soft);font-weight:300;line-height:1.42}
+  .fgrid .conn{position:absolute;inset:0;pointer-events:none;z-index:1}
+
+  /* ============ SLIDE 5 — DEMO / KIRO ============ */
+  .s5 .grid2{display:grid;grid-template-columns:.85fr 1.15fr;gap:4%;align-items:center;margin-top:1%}
+  .profile-card{background:#fff;border-radius:20px;overflow:hidden;box-shadow:0 20px 50px rgba(34,34,34,.14);
+    border:1px solid rgba(34,34,34,.06)}
+  .profile-card .pc-top{background:linear-gradient(135deg,var(--cardinal),var(--cardinal-dk));padding:7% 7% 10%;position:relative;color:#fff}
+  .profile-card .pc-top::after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--gold)}
+  .profile-card .avatar{width:clamp(56px,6vw,82px);height:clamp(56px,6vw,82px);border-radius:50%;background:var(--gold);
+    color:var(--cardinal-dk);display:grid;place-items:center;font-family:var(--head);font-weight:900;
+    font-size:clamp(26px,3.3vw,44px);margin-bottom:1.6vh;box-shadow:0 6px 18px rgba(0,0,0,.25)}
+  .profile-card .nm{font-family:var(--head);font-weight:900;font-size:clamp(20px,2.4vw,34px)}
+  .profile-card .role{font-size:clamp(12px,1.2vw,16px);color:var(--gold-lt);font-weight:500;margin-top:.3vh}
+  .profile-card .pc-body{padding:6% 7%}
+  .profile-card .pc-body .row{display:flex;justify-content:space-between;padding:1.3vh 0;border-bottom:1px solid rgba(34,34,34,.08);font-size:clamp(11px,1.15vw,16px)}
+  .profile-card .pc-body .row:last-child{border-bottom:none}
+  .profile-card .pc-body .k{color:var(--ink-soft);font-weight:500}
+  .profile-card .pc-body .v{color:var(--ink);font-weight:700}
+  .profile-card .statement{background:var(--ivory);padding:5% 7%;font-family:var(--head);font-weight:600;font-style:italic;
+    color:var(--cardinal);font-size:clamp(13px,1.4vw,20px);line-height:1.3;border-top:1px solid rgba(34,34,34,.06)}
+  .s5 .rightcol h1{font-size:clamp(30px,4.3vw,62px);color:#fff}
+  .s5 .rightcol .scen{color:rgba(255,255,255,.86);font-weight:300;font-size:clamp(13px,1.4vw,19px);margin-top:2%;max-width:42ch;line-height:1.5}
+  .journey{display:flex;gap:1%;margin-top:4%;position:relative}
+  .journey::before{content:"";position:absolute;top:1.1em;left:9%;right:9%;height:3px;
+    background:linear-gradient(90deg,rgba(241,190,72,.3),var(--gold));border-radius:3px}
+  .step{flex:1;position:relative;text-align:center;z-index:1}
+  .step .dot{width:2.2em;height:2.2em;border-radius:50%;background:var(--cardinal-dk);border:3px solid var(--gold);
+    color:var(--gold);display:grid;place-items:center;font-family:var(--head);font-weight:900;font-size:.9em;margin:0 auto 1.2vh}
+  .step h5{font-size:clamp(11px,1.15vw,16px);color:#fff;font-family:var(--body);font-weight:800;margin-bottom:.4vh;line-height:1.1}
+  .step p{font-size:clamp(9px,.92vw,13px);color:rgba(255,255,255,.72);font-weight:300;line-height:1.3}
+  .demo-badge{display:inline-flex;align-items:center;gap:12px;margin-top:4.4%;background:var(--gold);color:var(--cardinal-dk);
+    font-family:var(--head);font-weight:900;font-size:clamp(14px,1.7vw,24px);letter-spacing:.03em;
+    padding:1.4vh 2vw;border-radius:999px;box-shadow:0 12px 30px rgba(0,0,0,.28);cursor:pointer;
+    transition:transform .25s var(--ease),box-shadow .25s var(--ease)}
+  .demo-badge:hover{transform:scale(1.03);box-shadow:0 16px 38px rgba(0,0,0,.35)}
+  .demo-badge .live{width:12px;height:12px;border-radius:50%;background:var(--cardinal);
+    box-shadow:0 0 0 0 rgba(200,16,46,.6);animation:livedot 1.8s infinite}
+  @keyframes livedot{0%{box-shadow:0 0 0 0 rgba(200,16,46,.6)}70%{box-shadow:0 0 0 14px rgba(200,16,46,0)}100%{box-shadow:0 0 0 0 rgba(200,16,46,0)}}
+
+  /* ============ SLIDE 6 — BEHIND THE BRIDGE ============ */
+  .s6 .grid2{display:grid;grid-template-columns:1fr 1.02fr;gap:4.4%;align-items:center;margin-top:2%}
+  .s6 h1{font-size:clamp(28px,4vw,56px)}
+  .kiro-tag{display:inline-flex;align-items:center;gap:10px;background:var(--ink);color:#fff;border-radius:999px;
+    padding:1vh 1.4vw;margin-top:2.6%;font-weight:600;font-size:clamp(12px,1.25vw,17px)}
+  .kiro-tag b{font-family:var(--head);font-weight:900;color:var(--gold);font-size:1.25em}
+  .chips{display:flex;flex-wrap:wrap;gap:2%;margin-top:3%}
+  .chip{background:var(--white);border:1px solid rgba(200,16,46,.16);border-radius:999px;padding:1vh 1.4vw;
+    font-size:clamp(11px,1.12vw,15px);font-weight:600;color:var(--cardinal);box-shadow:0 4px 14px rgba(34,34,34,.05)}
+  .flowdiag{display:flex;flex-direction:column;gap:1.3vh}
+  .fnode{background:#fff;border-radius:14px;padding:2.2% 3%;box-shadow:0 10px 26px rgba(34,34,34,.08);
+    border-left:5px solid var(--gold);display:flex;align-items:center;gap:1.1vw;position:relative;opacity:0}
+  .slide.active .fnode{animation:rise .55s var(--ease) forwards}
+  .slide.active .fnode:nth-child(1){animation-delay:.2s}
+  .slide.active .fnode:nth-child(3){animation-delay:.42s}
+  .slide.active .fnode:nth-child(5){animation-delay:.64s}
+  .slide.active .fnode:nth-child(7){animation-delay:.86s}
+  .fnode:nth-child(odd) .fn-ic{flex:none;width:2.4em;height:2.4em;border-radius:10px;background:linear-gradient(135deg,var(--cardinal),var(--cardinal-dk));
+    display:grid;place-items:center;color:#fff;font-family:var(--head);font-weight:900}
+  .fnode .fn-t{font-weight:700;font-size:clamp(12px,1.3vw,18px);color:var(--ink)}
+  .fnode .fn-t span{display:block;font-weight:300;font-size:.78em;color:var(--ink-soft);margin-top:.2vh}
+  .flow-arrow{text-align:center;color:var(--gold-dk);font-size:1.2rem;line-height:.4;opacity:0}
+  .slide.active .flow-arrow{animation:rise .4s var(--ease) forwards}
+  .slide.active .flow-arrow:nth-child(2){animation-delay:.34s}
+  .slide.active .flow-arrow:nth-child(4){animation-delay:.56s}
+  .slide.active .flow-arrow:nth-child(6){animation-delay:.78s}
+  .considerations{display:grid;grid-template-columns:repeat(5,1fr);gap:1.6%;margin-top:3.4%}
+  .cons{background:rgba(255,255,255,.7);border-radius:12px;padding:2.4% 2%;border-top:3px solid var(--cardinal)}
+  .cons h5{font-size:clamp(11px,1.12vw,15px);color:var(--cardinal);font-family:var(--body);font-weight:800;margin-bottom:.6vh;line-height:1.1}
+  .cons p{font-size:clamp(9px,.94vw,13px);color:var(--ink-soft);font-weight:300;line-height:1.32}
+
+  /* ============ SLIDE 7 — BUILT FOR ISU ============ */
+  .s7 .grid2{display:grid;grid-template-columns:1fr 1.12fr;gap:3.4%;align-items:center;margin-top:1.4%}
+  .s7 h1{font-size:clamp(24px,3.5vw,48px)}
+  .s7 .lead{line-height:1.02}
+  .netmap{position:relative;aspect-ratio:1/.74;width:100%;max-height:30vh;margin:0 auto}
+  .netmap svg{width:100%;height:100%;overflow:visible}
+  .netmap .link{stroke:var(--gold);stroke-width:2;opacity:0}
+  .slide.active .netmap .link{animation:linkgrow .5s var(--ease) forwards}
+  .slide.active .netmap .link:nth-of-type(1){animation-delay:.5s}
+  .slide.active .netmap .link:nth-of-type(2){animation-delay:.6s}
+  .slide.active .netmap .link:nth-of-type(3){animation-delay:.7s}
+  .slide.active .netmap .link:nth-of-type(4){animation-delay:.8s}
+  .slide.active .netmap .link:nth-of-type(5){animation-delay:.9s}
+  .slide.active .netmap .link:nth-of-type(6){animation-delay:1s}
+  .slide.active .netmap .link:nth-of-type(7){animation-delay:1.1s}
+  @keyframes linkgrow{from{opacity:0}to{opacity:.55}}
+  .netmap .hub{fill:var(--cardinal)}
+  .netmap .hubring{fill:none;stroke:var(--gold);stroke-width:2.5}
+  .netmap .hubtxt{fill:#fff;font-family:var(--head);font-weight:900;font-size:11px;text-anchor:middle}
+  .netmap .dept{fill:#fff;stroke:var(--cardinal);stroke-width:2}
+  .netmap .depttxt{fill:var(--ink);font-family:var(--body);font-weight:600;font-size:9.5px;text-anchor:middle}
+  .netmap .deptnode{opacity:0}
+  .slide.active .netmap .deptnode{animation:pop .4s ease forwards}
+  .slide.active .netmap .deptnode:nth-of-type(1){animation-delay:.6s}
+  .slide.active .netmap .deptnode:nth-of-type(2){animation-delay:.72s}
+  .slide.active .netmap .deptnode:nth-of-type(3){animation-delay:.84s}
+  .slide.active .netmap .deptnode:nth-of-type(4){animation-delay:.96s}
+  .slide.active .netmap .deptnode:nth-of-type(5){animation-delay:1.08s}
+  .slide.active .netmap .deptnode:nth-of-type(6){animation-delay:1.2s}
+  .slide.active .netmap .deptnode:nth-of-type(7){animation-delay:1.32s}
+  .benefit-cols{display:grid;grid-template-columns:repeat(3,1fr);gap:2.2%;margin-top:1%}
+  .bcol h5{text-transform:uppercase;letter-spacing:.12em;font-size:.76rem;font-weight:800;color:var(--cardinal);
+    margin-bottom:1vh;padding-bottom:.7vh;border-bottom:2px solid var(--gold)}
+  .bcol ul{list-style:none;display:flex;flex-direction:column;gap:.5vh}
+  .bcol li{font-size:clamp(10px,1.02vw,14px);color:var(--ink-soft);font-weight:400;padding-left:14px;position:relative;line-height:1.3}
+  .bcol li::before{content:"";position:absolute;left:0;top:.55em;width:5px;height:5px;border-radius:50%;background:var(--gold)}
+  .roadmap{display:grid;grid-template-columns:repeat(4,1fr);gap:1.8%;margin-top:2.2%;position:relative}
+  .roadmap::before{content:"";position:absolute;top:1.1em;left:5%;right:5%;height:3px;
+    background:linear-gradient(90deg,var(--cardinal),var(--gold));border-radius:3px;z-index:0}
+  .rph{position:relative;z-index:1;padding-top:3.4%}
+  .rph .rnode{position:absolute;top:0;left:0;width:2.2em;height:2.2em;border-radius:50%;background:var(--white);
+    border:3px solid var(--cardinal);color:var(--cardinal);display:grid;place-items:center;font-family:var(--head);font-weight:900;font-size:.85em}
+  .rph .when{text-transform:uppercase;letter-spacing:.12em;font-size:.66rem;color:var(--gold-dk);font-weight:800;margin-bottom:.5vh}
+  .rph h5{color:var(--cardinal);font-size:clamp(12px,1.25vw,17px);margin-bottom:.6vh;line-height:1.08;font-family:var(--body);font-weight:800;letter-spacing:-.01em}
+  .rph p{font-size:clamp(9px,.94vw,13px);color:var(--ink-soft);font-weight:300;line-height:1.34}
+
+  /* ============ SLIDE 8 — CLOSE ============ */
+  .s8{align-items:center;text-align:center}
+  .s8 .closebg{position:absolute;inset:0;z-index:0;opacity:.6}
+  .s8 .logo-hero{height:clamp(70px,12vh,130px);background:#fff;padding:1.8% 2.6%;border-radius:18px;
+    filter:drop-shadow(0 18px 44px rgba(0,0,0,.42));margin-bottom:2.6%;z-index:3}
+  .s8 h1{font-size:clamp(28px,4.4vw,66px);color:#fff;max-width:18ch;z-index:3}
+  .s8 .support{font-family:var(--head);font-weight:600;font-style:italic;color:var(--gold);
+    font-size:clamp(16px,2vw,30px);margin-top:1.8%;z-index:3}
+  .s8 .ba{display:grid;grid-template-columns:1fr auto 1fr;gap:3%;align-items:center;margin:3.6% 0;max-width:80%;z-index:3}
+  .s8 .ba .col{text-align:left}
+  .s8 .ba .col.after{text-align:right}
+  .s8 .ba .col .h{text-transform:uppercase;letter-spacing:.18em;font-size:.74rem;font-weight:800;margin-bottom:1.2vh}
+  .s8 .ba .col.before .h{color:rgba(255,255,255,.6)}
+  .s8 .ba .col.after .h{color:var(--gold)}
+  .s8 .ba .col .line{color:#fff;font-weight:500;font-size:clamp(12px,1.35vw,19px);line-height:1.55;opacity:.9}
+  .s8 .ba .col.before .line{color:rgba(255,255,255,.62)}
+  .s8 .ba .mid svg{width:clamp(70px,10vw,140px)}
+  .s8 .ba .mid .arc{fill:none;stroke:var(--gold);stroke-width:5;stroke-linecap:round}
+  .s8 .ba .mid .road{stroke:var(--gold);stroke-width:5;stroke-linecap:round}
+  .slide.active .s8 .ba .mid .draw{stroke-dasharray:320;stroke-dashoffset:320;animation:draw 1.2s .6s var(--ease) forwards}
+  .s8 .cta{background:var(--gold);color:var(--cardinal-dk);font-family:var(--head);font-weight:900;
+    font-size:clamp(14px,1.9vw,28px);padding:1.9vh 2.8vw;border-radius:16px;box-shadow:0 14px 36px rgba(0,0,0,.3);
+    max-width:30ch;line-height:1.2;z-index:3}
+  .s8 .discover{display:flex;gap:1.4vw;margin-top:3.2%;z-index:3}
+  .s8 .discover span{font-family:var(--head);font-weight:900;color:#fff;font-size:clamp(16px,2.4vw,38px);letter-spacing:.04em}
+  .s8 .discover span:nth-child(2),.s8 .discover span:nth-child(4){color:var(--gold);font-weight:700}
+
+  /* ============ CHROME ============ */
+  .progress{position:fixed;top:0;left:0;height:4px;z-index:60;width:0;
+    background:linear-gradient(90deg,var(--cardinal),var(--gold));transition:width .5s var(--ease)}
+  .dots{position:fixed;bottom:1.4%;left:50%;transform:translateX(-50%);z-index:60;display:flex;gap:9px;align-items:center}
+  .dots .dot{width:9px;height:9px;border-radius:50%;background:rgba(150,150,150,.4);cursor:pointer;transition:all .28s var(--ease)}
+  .dots .dot.on{background:var(--gold);width:26px;border-radius:6px}
+  .nav{position:fixed;bottom:2.6%;right:2.2%;z-index:60;display:flex;gap:10px}
+  .nav button,.hint{width:42px;height:42px;border-radius:50%;cursor:pointer;font-size:18px;border:1.5px solid var(--gold);
+    background:rgba(241,190,72,.14);color:var(--cardinal);backdrop-filter:blur(5px);transition:.22s;font-weight:700;display:grid;place-items:center}
+  .nav button:hover{background:var(--gold);color:var(--cardinal-dk)}
+  .nav button:disabled{opacity:.3;cursor:default}
+  .helpbtn{position:fixed;bottom:2.6%;left:2.2%;z-index:60;width:42px;height:42px;border-radius:50%;cursor:pointer;
+    border:1.5px solid var(--gold);background:rgba(241,190,72,.14);color:var(--cardinal);font-weight:700;font-size:16px;backdrop-filter:blur(5px)}
+  .overlay{position:fixed;inset:0;z-index:100;background:rgba(10,4,6,.82);backdrop-filter:blur(6px);
+    display:none;place-items:center;color:#fff}
+  .overlay.show{display:grid}
+  .overlay .card{background:#17090d;border:1px solid rgba(241,190,72,.3);border-radius:18px;padding:40px 48px;max-width:460px}
+  .overlay h3{font-family:var(--head);color:var(--gold);font-size:28px;margin-bottom:20px}
+  .overlay table{width:100%;border-collapse:collapse}
+  .overlay td{padding:8px 0;font-size:15px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .overlay td:first-child{color:var(--gold-lt);font-weight:700;white-space:nowrap;padding-right:26px}
+  .overlay .close{margin-top:24px;background:var(--gold);color:var(--cardinal-dk);border:none;border-radius:10px;
+    padding:12px 22px;font-weight:800;cursor:pointer;font-size:15px}
+  .kbd{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:6px;padding:2px 8px;font-family:var(--body);font-size:13px}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation-duration:.001s!important;animation-delay:0s!important;transition-duration:.05s!important}
+    .slide{transform:none}
+    .bridge-reveal .draw,.gap-mid .missing,.s8 .ba .mid .draw{stroke-dashoffset:0!important}
+    .netmap .link{opacity:.55!important}.netmap .deptnode,.fnode,.flow-arrow,.bridge-reveal .pop{opacity:1!important}
+    .livedot,.demo-badge .live{animation:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+
+<div class="deck">
+<div class="stage-wrap">
+<div class="stage" id="stage">
+
+  <!-- ===================== SLIDE 1 — TITLE ===================== -->
+  <section class="slide s1 is-hero bg-cardinal active">
+    <svg class="hero-bg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g stroke="rgba(248,246,240,.14)" stroke-width="1.5" fill="none">
+        <path d="M0 640 H1600"/>
+        <path d="M0 640 L160 480 L320 640 L480 480 L640 640 L800 480 L960 640 L1120 480 L1280 640 L1440 480 L1600 640"/>
+        <path d="M0 480 H1600"/>
+        <path d="M0 640 Q400 360 800 460 Q1200 560 1600 300" stroke="rgba(241,190,72,.22)" stroke-width="2"/>
+      </g>
+      <g fill="rgba(241,190,72,.5)">
+        <circle cx="160" cy="480" r="5"/><circle cx="480" cy="480" r="5"/><circle cx="800" cy="480" r="5"/>
+        <circle cx="1120" cy="480" r="5"/><circle cx="1440" cy="480" r="5"/>
+      </g>
+    </svg>
+    <img class="logo-hero r r1" src="logo.png" alt="Research Bridge logo" />
+    <div class="wordmark r r2">RESEARCH&nbsp;BRIDGE</div>
+    <div class="tagline r r3">Connecting Research Potential with Opportunity.</div>
+    <div class="brandline r r3">Bridging Research Interests, Discovery, Guidance &amp; Engagement</div>
+    <div class="credits r r4">
+      <div class="col">
+        <div class="h">Our Team</div>
+        <div class="names">
+          <span>Tanisha Ravindran</span><span>Aakash Rao</span>
+          <span>Aarush Pathuri</span><span>Ayaan Rakin</span>
+        </div>
+      </div>
+      <div class="divider"></div>
+      <div class="col">
+        <div class="h">Team Champion</div>
+        <div class="champ">Ben Boonstra</div>
+      </div>
+    </div>
+    <div class="event r r5">
+      <span><b>AWS Kiro Hackathon</b></span><span class="dot">◆</span>
+      <span>Iowa State University</span><span class="dot">◆</span>
+      <span>November 17, 2026</span>
+    </div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">01 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 2 — OPPORTUNITY VS ACCESS ===================== -->
+  <section class="slide s2 bg-ivory">
+    <img class="corner" src="logo.png" alt="Research Bridge" />
+    <div class="kicker r">Iowa State Research · Opportunity vs. Access</div>
+    <h1 class="lead r" style="max-width:26ch">Research Opens Doors. <span class="hl">Finding It Shouldn't Be the Hard Part.</span></h1>
+    <div class="grid2">
+      <div class="bigstat r r2">
+        <span class="r1tag">R1 Research University</span><br>
+        $462.35M
+        <small>Iowa State research expenditures — FY 2024</small>
+        <cite>Source: Iowa State University / NSF HERD, FY 2024</cite>
+      </div>
+      <div class="benefits r r3">
+        <div class="ben"><span class="ic">🎓</span><h4>Graduate Education</h4><p>Preparation for advanced study and research careers.</p></div>
+        <div class="ben"><span class="ic">💼</span><h4>Career Readiness</h4><p>Hands-on experience and transferable professional skills.</p></div>
+        <div class="ben"><span class="ic">🧠</span><h4>Critical Thinking</h4><p>Problem-solving, analysis, and independent learning.</p></div>
+        <div class="ben"><span class="ic">🤝</span><h4>Faculty Mentorship</h4><p>Learning alongside faculty and exploring research interests.</p></div>
+      </div>
+    </div>
+    <div class="disconnect r r4">
+      <div class="side stu">
+        <div class="lab"><span>👥</span> Students</div>
+        <ul>
+          <li>Scattered research opportunities</li>
+          <li>Uncertainty about faculty availability</li>
+          <li>Reliance on individual cold emails</li>
+          <li>Difficulty identifying relevant projects</li>
+          <li>Limited visibility into required skills</li>
+        </ul>
+      </div>
+      <div class="gap-mid">
+        <svg viewBox="0 0 170 120" preserveAspectRatio="xMidYMid meet">
+          <line class="deck-l" x1="4" y1="78" x2="52" y2="78"/>
+          <line class="deck-r" x1="118" y1="78" x2="166" y2="78"/>
+          <line class="pier" x1="30" y1="78" x2="30" y2="104"/>
+          <line class="pier" x1="140" y1="78" x2="140" y2="104"/>
+          <path class="missing" d="M52 78 Q85 44 118 78"/>
+          <text class="gaptxt" x="85" y="34" text-anchor="middle">missing</text>
+        </svg>
+      </div>
+      <div class="side fac">
+        <div class="lab">Faculty <span>🔬</span></div>
+        <ul>
+          <li>Repetitive student inquiries</li>
+          <li>Limited time for individual screening</li>
+          <li>Difficulty comparing candidate suitability</li>
+          <li>Administrative back-and-forth</li>
+          <li>Inefficient coordination of opportunities</li>
+        </ul>
+      </div>
+    </div>
+    <div class="takeaway2 r r5">The opportunities exist. The talent exists. <b>The connection is missing.</b></div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">02 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 3 — MEET RESEARCH BRIDGE ===================== -->
+  <section class="slide s3 bg-cardinal">
+    <img class="corner" src="logo.png" alt="Research Bridge" />
+    <div class="top">
+      <div class="heading">
+        <img class="logo-feature r r1" src="logo.png" alt="Research Bridge logo" />
+        <div class="kicker r">The Reveal</div>
+        <h1 class="r r1">Meet Research Bridge.</h1>
+        <div class="tag r r2">One Bridge. Two Sides. Better Research Matches.</div>
+        <p class="r r3">A centralized student–faculty research matching platform designed around Iowa State's undergraduate research ecosystem and EUReCA — bringing discovery, profiles, matching, transparent recommendations, skill guidance, and outreach into one experience.</p>
+      </div>
+      <div class="bridge-reveal r r2">
+        <svg viewBox="0 0 520 220" preserveAspectRatio="xMidYMid meet">
+          <text class="endlab" x="6" y="150">Students</text>
+          <text class="endlab g" x="514" y="150" text-anchor="end">Faculty</text>
+          <path class="arch draw" style="--len:620" d="M70 150 Q260 20 450 150"/>
+          <path class="road draw" style="--len:400" d="M60 150 H460"/>
+          <g class="cable">
+            <line x1="130" y1="150" x2="130" y2="95" class="draw" style="--len:60"/>
+            <line x1="190" y1="150" x2="190" y2="66" class="draw" style="--len:90"/>
+            <line x1="260" y1="150" x2="260" y2="55" class="draw" style="--len:100"/>
+            <line x1="330" y1="150" x2="330" y2="66" class="draw" style="--len:90"/>
+            <line x1="390" y1="150" x2="390" y2="95" class="draw" style="--len:60"/>
+          </g>
+          <circle class="node pop" cx="70" cy="150" r="10"/>
+          <circle class="node c pop" cx="260" cy="150" r="13"/>
+          <circle class="node pop" cx="450" cy="150" r="10"/>
+        </svg>
+      </div>
+    </div>
+    <div class="flow r r4">
+      <span class="pill">STUDENTS</span><span class="arrow">→</span>
+      <span class="pill mid">RESEARCH&nbsp;BRIDGE</span><span class="arrow">→</span>
+      <span class="pill">FACULTY</span>
+    </div>
+    <div class="bottom">
+      <div class="acro r r5">
+        <div class="ltr"><div class="b">B</div><div class="w">Bridging</div></div>
+        <div class="ltr"><div class="b">R</div><div class="w">Research</div></div>
+        <div class="ltr"><div class="b">I</div><div class="w">Interests</div></div>
+        <div class="ltr"><div class="b">D</div><div class="w">Discovery</div></div>
+        <div class="ltr"><div class="b">G</div><div class="w">Guidance</div></div>
+        <div class="ltr"><div class="b">E</div><div class="w">Engagement</div></div>
+      </div>
+      <div class="vprops r r6">
+        <div class="vp"><div class="h">Discover</div><p>Find relevant research opportunities and understand requirements.</p></div>
+        <div class="vp"><div class="h">Match</div><p>Connect student interests and capabilities with faculty project needs.</p></div>
+        <div class="vp"><div class="h">Grow</div><p>Understand skill gaps and take meaningful next steps toward research.</p></div>
+      </div>
+    </div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">03 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 4 — FEATURES ===================== -->
+  <section class="slide s4 bg-ivory">
+    <img class="corner" src="logo.png" alt="Research Bridge" />
+    <div class="head-row">
+      <div>
+        <div class="kicker r">Key Features</div>
+        <h1 class="lead r" style="max-width:none">More Than a Research <span class="hl">Directory.</span></h1>
+      </div>
+      <p class="sub r r1">An intelligent, transparent, and connected research experience.</p>
+    </div>
+    <div class="fgrid">
+      <div class="fcard r r1"><span class="no">01</span>
+        <div class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
+        <h4>Centralized Research Discovery</h4>
+        <p>One place for student profiles, faculty research projects, relevant skills, interests, and requirements.</p>
+      </div>
+      <div class="fcard r r2"><span class="no">02</span>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 6h7M4 12h5M4 18h8"/><circle cx="18" cy="8" r="2.5"/><circle cx="18" cy="16" r="2.5"/><path d="M13 9l3 5"/></svg></div>
+        <h4>Intelligent Matching</h4>
+        <p>AI-assisted or preference-based matching across student interests, academic background, skills, and faculty project requirements.</p>
+      </div>
+      <div class="fcard r r3"><span class="no">03</span>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 21v-6M9 21V9M15 21v-9M21 21V5"/><path d="M3 15l6-6 6 3 6-6"/></svg></div>
+        <h4>Explainable Match Scores</h4>
+        <p>Transparent recommendations that help users understand why a student and research project may be compatible.</p>
+      </div>
+      <div class="fcard r r4"><span class="no">04</span>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M5 20V6a2 2 0 012-2h7l5 5v11"/><path d="M14 4v5h5"/><path d="M8 13h6M8 16h4"/></svg></div>
+        <h4>Skill-Gap Roadmaps</h4>
+        <p>Personalized guidance showing which skills or knowledge areas students could develop for particular opportunities.</p>
+      </div>
+      <div class="fcard r r5"><span class="no">05</span>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 5h18v12H8l-4 3V5z"/><path d="M7 9h10M7 13h6"/></svg></div>
+        <h4>Streamlined Outreach</h4>
+        <p>Contextual draft emails and clearer communication between students and faculty.</p>
+      </div>
+      <div class="fcard r r6"><span class="no">06</span>
+        <div class="ic"><svg viewBox="0 0 24 24"><circle cx="7" cy="8" r="2.5"/><circle cx="17" cy="8" r="2.5"/><path d="M3 19c0-2.8 1.8-5 4-5s4 2.2 4 5M13 19c0-2.8 1.8-5 4-5s4 2.2 4 5"/></svg></div>
+        <h4>Coordinated Matching</h4>
+        <p>Structured matching sessions, student and faculty preferences, and more organized placement workflows.</p>
+      </div>
+    </div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">04 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 5 — LIVE DEMO / MEET KIRO ===================== -->
+  <section class="slide s5 bg-cardinal">
+    <img class="corner" src="logo.png" alt="Research Bridge" />
+    <div class="kicker r">Live Demonstration</div>
+    <div class="grid2">
+      <div class="profile-card r r1">
+        <div class="pc-top">
+          <div class="avatar">K</div>
+          <div class="nm">Kiro</div>
+          <div class="role">Undergraduate Researcher — in search</div>
+        </div>
+        <div class="pc-body">
+          <div class="row"><span class="k">Year</span><span class="v">Sophomore</span></div>
+          <div class="row"><span class="k">Major</span><span class="v">Computer Science</span></div>
+          <div class="row"><span class="k">University</span><span class="v">Iowa State</span></div>
+        </div>
+        <div class="statement">"Looking for research. Struggling to find the right connection."</div>
+      </div>
+      <div class="rightcol">
+        <h1 class="r r1">Meet Kiro.</h1>
+        <p class="scen r r2">A sophomore in Computer Science who wants to get involved in undergraduate research — but is unsure which professors have opportunities and which projects match his interests and skills.</p>
+        <div class="journey r r3">
+          <div class="step"><div class="dot">01</div><h5>Build a Profile</h5><p>Background, skills, interests, experience.</p></div>
+          <div class="step"><div class="dot">02</div><h5>Explore Research</h5><p>Discover available faculty projects.</p></div>
+          <div class="step"><div class="dot">03</div><h5>Find a Match</h5><p>Identify compatible opportunities.</p></div>
+          <div class="step"><div class="dot">04</div><h5>Understand Results</h5><p>Review match explanations &amp; guidance.</p></div>
+          <div class="step"><div class="dot">05</div><h5>Next Step</h5><p>Continue toward outreach or placement.</p></div>
+        </div>
+        <div class="demo-badge r r4" id="demoBtn" title="Set the app URL in the DEMO_URL variable, then click to open">
+          <span class="live"></span> LIVE DEMONSTRATION — switch to the app
+        </div>
+      </div>
+    </div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">05 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 6 — BEHIND THE BRIDGE ===================== -->
+  <section class="slide s6 bg-white">
+    <img class="corner" src="logo.png" alt="Research Bridge" />
+    <div class="kicker r">Behind the Bridge</div>
+    <div class="grid2">
+      <div>
+        <h1 class="lead r r1" style="max-width:none">Behind the Bridge.</h1>
+        <p class="sub r r2" style="margin-top:1.6%">Built with AWS Kiro. Powered by structured research matching workflows.</p>
+        <div class="kiro-tag r r2"><b>Kiro</b> AWS Kiro — our build partner for the prototype</div>
+        <div class="chips r r3">
+          <span class="chip">AI-Assisted Development</span>
+          <span class="chip">Agentic Workflows</span>
+          <span class="chip">Rapid Prototyping</span>
+          <span class="chip">Requirements-Driven Implementation</span>
+          <span class="chip">Iterative Refinement</span>
+        </div>
+      </div>
+      <div class="flowdiag r r2">
+        <div class="fnode"><span class="fn-ic">1</span><span class="fn-t">Student Profiles + Faculty Research Projects<span>Structured inputs from both sides</span></span></div>
+        <div class="flow-arrow">▼</div>
+        <div class="fnode"><span class="fn-ic">2</span><span class="fn-t">Matching &amp; Preference Engine<span>Interests, skills, requirements, preferences</span></span></div>
+        <div class="flow-arrow">▼</div>
+        <div class="fnode"><span class="fn-ic">3</span><span class="fn-t">Explainable Match Results<span>Transparent compatibility reasoning</span></span></div>
+        <div class="flow-arrow">▼</div>
+        <div class="fnode"><span class="fn-ic">4</span><span class="fn-t">Guidance, Outreach &amp; Next Steps<span>Skill roadmaps and contextual outreach</span></span></div>
+      </div>
+    </div>
+    <div class="considerations r r4">
+      <div class="cons"><h5>Structured Data</h5><p>Organized student, faculty, project, and preference information.</p></div>
+      <div class="cons"><h5>Matching Logic</h5><p>Compatibility across interests, skills, requirements, and preferences.</p></div>
+      <div class="cons"><h5>Privacy-Aware Design</h5><p>Role-based access and responsible handling of student data.</p></div>
+      <div class="cons"><h5>Scalable Workflows</h5><p>Architecture that can evolve across projects, departments, and cycles.</p></div>
+      <div class="cons"><h5>Future SaaS Potential</h5><p>A maintainable, expandable platform for possible institutional adoption.</p></div>
+    </div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">06 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 7 — BUILT FOR ISU ===================== -->
+  <section class="slide s7 bg-ivory">
+    <img class="corner" src="logo.png" alt="Research Bridge" />
+    <div class="kicker r">Institutional Impact &amp; Roadmap</div>
+    <h1 class="lead r" style="max-width:none">Built for Iowa State. <span class="hl">Ready to Grow.</span></h1>
+    <p class="sub r r1" style="margin-top:1%;max-width:70ch">From individual research matches to a connected campus-wide research ecosystem.</p>
+    <div class="grid2">
+      <div class="netmap r r2">
+        <svg viewBox="0 0 440 360" preserveAspectRatio="xMidYMid meet">
+          <!-- links hub->dept -->
+          <line class="link" x1="220" y1="180" x2="220" y2="46"/>
+          <line class="link" x1="220" y1="180" x2="372" y2="96"/>
+          <line class="link" x1="220" y1="180" x2="400" y2="210"/>
+          <line class="link" x1="220" y1="180" x2="332" y2="310"/>
+          <line class="link" x1="220" y1="180" x2="108" y2="310"/>
+          <line class="link" x1="220" y1="180" x2="40" y2="210"/>
+          <line class="link" x1="220" y1="180" x2="68" y2="96"/>
+          <!-- dept nodes -->
+          <g class="deptnode"><rect class="dept" x="160" y="22" width="120" height="30" rx="8"/><text class="depttxt" x="220" y="41">Computer Science &amp; AI</text></g>
+          <g class="deptnode"><rect class="dept" x="318" y="80" width="104" height="30" rx="8"/><text class="depttxt" x="370" y="99">Engineering</text></g>
+          <g class="deptnode"><rect class="dept" x="330" y="196" width="108" height="30" rx="8"/><text class="depttxt" x="384" y="215">Agriculture &amp; Life</text></g>
+          <g class="deptnode"><rect class="dept" x="276" y="296" width="112" height="30" rx="8"/><text class="depttxt" x="332" y="315">Biological Sciences</text></g>
+          <g class="deptnode"><rect class="dept" x="58" y="296" width="100" height="30" rx="8"/><text class="depttxt" x="108" y="315">Design</text></g>
+          <g class="deptnode"><rect class="dept" x="4" y="196" width="92" height="30" rx="8"/><text class="depttxt" x="50" y="215">Business</text></g>
+          <g class="deptnode"><rect class="dept" x="4" y="80" width="128" height="30" rx="8"/><text class="depttxt" x="68" y="99">Humanities &amp; Social</text></g>
+          <!-- hub -->
+          <circle class="hubring" cx="220" cy="180" r="44"/>
+          <circle class="hub" cx="220" cy="180" r="36"/>
+          <text class="hubtxt" x="220" y="176">RESEARCH</text>
+          <text class="hubtxt" x="220" y="190">BRIDGE</text>
+        </svg>
+      </div>
+      <div class="benefit-cols">
+        <div class="bcol r r2">
+          <h5>For Students</h5>
+          <ul>
+            <li>Easier access to research opportunities</li>
+            <li>Relevant project recommendations</li>
+            <li>Clearer eligibility information</li>
+            <li>More transparent matching</li>
+            <li>Guidance for skill development</li>
+          </ul>
+        </div>
+        <div class="bcol r r3">
+          <h5>For Faculty</h5>
+          <ul>
+            <li>More organized recruitment</li>
+            <li>Better visibility into qualifications</li>
+            <li>Efficient candidate discovery</li>
+            <li>Less repetitive coordination</li>
+            <li>More structured communication</li>
+          </ul>
+        </div>
+        <div class="bcol r r4">
+          <h5>For Iowa State</h5>
+          <ul>
+            <li>More consistent matching processes</li>
+            <li>Potentially fewer repeat rounds</li>
+            <li>Visibility into research engagement</li>
+            <li>Better cross-discipline coordination</li>
+            <li>Room for evaluation &amp; improvement</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="roadmap r r5">
+      <div class="rph"><div class="rnode">1</div><div class="when">Phase 01 — Validate &amp; Pilot</div><h5>Pilot &amp; Evaluate</h5><p>Pilot with an undergraduate research program or EUReCA cohort. Gather feedback and evaluate match quality.</p></div>
+      <div class="rph"><div class="rnode">2</div><div class="when">Phase 02 — Enhance Workflows</div><h5>Faculty &amp; Placement Tools</h5><p>Faculty review tools, notifications, interview coordination, feedback loops, and placement processes.</p></div>
+      <div class="rph"><div class="rnode">3</div><div class="when">Phase 03 — Smarter Personalization</div><h5>Refined Matching</h5><p>Matching algorithms, explainable recommendations, skill-gap roadmaps, and fairness evaluation.</p></div>
+      <div class="rph"><div class="rnode">4</div><div class="when">Phase 04 — Scale Across ISU</div><h5>Campus Adoption</h5><p>Explore campus authentication, approved integrations, privacy requirements, operating costs, and department adoption.</p></div>
+    </div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">07 / 08</span></div>
+  </section>
+
+  <!-- ===================== SLIDE 8 — CLOSE ===================== -->
+  <section class="slide s8 is-hero bg-cardinal">
+    <svg class="closebg" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+      <g fill="none">
+        <path d="M120 620 H760" stroke="rgba(255,255,255,.25)" stroke-width="4"/>
+        <path d="M840 620 H1480" stroke="rgba(255,255,255,.25)" stroke-width="4"/>
+        <path d="M200 620 Q800 230 1400 620" stroke="rgba(241,190,72,.35)" stroke-width="3"/>
+        <g stroke="rgba(241,190,72,.3)" stroke-width="2">
+          <line x1="360" y1="620" x2="360" y2="470"/><line x1="560" y1="620" x2="560" y2="380"/>
+          <line x1="800" y1="620" x2="800" y2="340"/><line x1="1040" y1="620" x2="1040" y2="380"/>
+          <line x1="1240" y1="620" x2="1240" y2="470"/>
+        </g>
+      </g>
+    </svg>
+    <img class="logo-hero r r1" src="logo.png" alt="Research Bridge logo" />
+    <h1 class="r r2">Every Research Opportunity Starts With a Connection.</h1>
+    <div class="support r r2">Let's make those connections easier to find.</div>
+    <div class="ba r r3">
+      <div class="col before">
+        <div class="h">Before Research Bridge</div>
+        <div class="line">Scattered Opportunities<br>Individual Outreach<br>Uncertain Matches<br>Disconnected Processes</div>
+      </div>
+      <div class="mid">
+        <svg viewBox="0 0 170 100"><path class="arc draw" d="M14 82 Q85 6 156 82"/><line class="road draw" x1="10" y1="82" x2="160" y2="82"/></svg>
+      </div>
+      <div class="col after">
+        <div class="h">With Research Bridge</div>
+        <div class="line">Centralized Discovery<br>Relevant Matching<br>Transparent Recommendations<br>Clearer Next Steps</div>
+      </div>
+    </div>
+    <div class="cta r r4">Let's explore bringing Research Bridge to an Iowa State undergraduate research program.</div>
+    <div class="discover r r5"><span>DISCOVER.</span><span>MATCH.</span><span>GROW.</span></div>
+    <div class="footer"><span>Research Bridge — Bridging Research Interests, Discovery, Guidance &amp; Engagement</span><span class="num">08 / 08</span></div>
+  </section>
+
+</div><!-- /stage -->
+</div><!-- /stage-wrap -->
+</div><!-- /deck -->
+
+<!-- chrome -->
+<div class="dots" id="dots"></div>
+<button class="helpbtn" id="helpbtn" aria-label="Keyboard help">?</button>
+<div class="nav">
+  <button id="prev" aria-label="Previous slide">‹</button>
+  <button id="fs" aria-label="Toggle fullscreen">⛶</button>
+  <button id="next" aria-label="Next slide">›</button>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="card">
+    <h3>Presenting Research Bridge</h3>
+    <table>
+      <tr><td><span class="kbd">→</span> <span class="kbd">Space</span></td><td>Next slide</td></tr>
+      <tr><td><span class="kbd">←</span> <span class="kbd">Backspace</span></td><td>Previous slide</td></tr>
+      <tr><td><span class="kbd">F</span></td><td>Toggle fullscreen</td></tr>
+      <tr><td><span class="kbd">Home</span> / <span class="kbd">End</span></td><td>First / last slide</td></tr>
+      <tr><td><span class="kbd">1</span>–<span class="kbd">8</span></td><td>Jump to slide</td></tr>
+      <tr><td>Dots / swipe</td><td>Navigate on touch</td></tr>
+    </table>
+    <p style="margin-top:18px;font-size:13px;color:rgba(255,255,255,.6);line-height:1.5">
+      On Slide 5, the <b>Live Demonstration</b> button opens the Research Bridge app in a new tab.
+      Switch back to this tab (Alt+Tab) to continue the deck.</p>
+    <button class="close" id="closeHelp">Got it</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  const slides=[...document.querySelectorAll('.slide')];
+  const total=slides.length, prefersReduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let idx=0;
+  const progress=document.getElementById('progress'), dotsWrap=document.getElementById('dots');
+  const prevBtn=document.getElementById('prev'), nextBtn=document.getElementById('next');
+
+  slides.forEach((_,i)=>{const d=document.createElement('div');d.className='dot'+(i===0?' on':'');
+    d.title='Slide '+(i+1);d.onclick=()=>go(i);dotsWrap.appendChild(d)});
+  const dots=[...dotsWrap.children];
+
+  function resetAnims(s){ /* animations are CSS-bound to .active; nothing persistent to reset */ }
+
+  function go(n){
+    n=Math.max(0,Math.min(total-1,n));
+    slides[idx].classList.remove('active'); dots[idx].classList.remove('on');
+    idx=n;
+    const s=slides[idx];
+    // retrigger CSS animations by reflow
+    s.classList.remove('active'); void s.offsetWidth; s.classList.add('active');
+    dots[idx].classList.add('on');
+    progress.style.width=(idx/(total-1)*100)+'%';
+    prevBtn.disabled=idx===0; nextBtn.disabled=idx===total-1;
+  }
+  const next=()=>go(idx+1), prev=()=>go(idx-1);
+  nextBtn.onclick=next; prevBtn.onclick=prev;
+
+  const fsBtn=document.getElementById('fs');
+  function toggleFs(){ if(document.fullscreenElement){document.exitFullscreen();}
+    else{document.documentElement.requestFullscreen().catch(()=>{});} }
+  fsBtn.onclick=toggleFs;
+
+  const overlay=document.getElementById('overlay');
+  document.getElementById('helpbtn').onclick=()=>overlay.classList.add('show');
+  document.getElementById('closeHelp').onclick=()=>overlay.classList.remove('show');
+  overlay.onclick=e=>{ if(e.target===overlay) overlay.classList.remove('show'); };
+
+  addEventListener('keydown',e=>{
+    if(overlay.classList.contains('show')){ if(e.key==='Escape')overlay.classList.remove('show'); return; }
+    const k=e.key;
+    if(['ArrowRight',' ','PageDown','Enter'].includes(k)){e.preventDefault();next();}
+    else if(['ArrowLeft','PageUp','Backspace'].includes(k)){e.preventDefault();prev();}
+    else if(k==='Home'){e.preventDefault();go(0);}
+    else if(k==='End'){e.preventDefault();go(total-1);}
+    else if(k.toLowerCase()==='f'){e.preventDefault();toggleFs();}
+    else if(k==='?'){overlay.classList.add('show');}
+    else if(/^[1-8]$/.test(k)){go(+k-1);}
+  });
+
+  // touch swipe
+  let sx=0,sy=0;
+  addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0].clientY;},{passive:true});
+  addEventListener('touchend',e=>{const dx=e.changedTouches[0].clientX-sx, dy=e.changedTouches[0].clientY-sy;
+    if(Math.abs(dx)>50&&Math.abs(dx)>Math.abs(dy)) dx<0?next():prev();},{passive:true});
+
+  // Live demo handoff. Set DEMO_URL to the running Research Bridge app
+  // (e.g. "http://localhost:3000") to open it in a new tab on click.
+  // Left empty, the button is a visual cue and the presenter switches to
+  // the app manually (Alt+Tab) — no fake demo is shown.
+  const DEMO_URL="";
+  const demoBtn=document.getElementById('demoBtn');
+  if(demoBtn){ demoBtn.onclick=()=>{ if(DEMO_URL) window.open(DEMO_URL,'_blank'); }; }
+
+  // deep-link: #3 or ?s=3 opens that slide (1-based)
+  function fromHash(){
+    const m=(location.hash.match(/\d+/)||[])[0] || new URLSearchParams(location.search).get('s');
+    const n=parseInt(m,10); if(!isNaN(n)) return Math.min(total-1,Math.max(0,n-1)); return 0;
+  }
+  addEventListener('hashchange',()=>go(fromHash()));
+
+  // init
+  prevBtn.disabled=true;
+  go(fromHash());
+})();
+</script>
+</body>
+</html>
