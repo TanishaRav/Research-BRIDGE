@@ -23,11 +23,14 @@ from urllib.parse import parse_qs, urlparse
 
 from datetime import datetime
 
+import json
+
 from app import db
 from app import sanitize
 from app import templates
 from app.services import notify as notify_service
 from app.services import workday
+from matching import engine as match_engine
 
 # ---------------------------------------------------------------------------
 # Configuration / secrets
@@ -791,13 +794,18 @@ def session_detail(ctx):
                     % (session["id"], templates.csrf_input(ctx.user["csrf_token"]),
                        templates.esc(key), templates.esc(key.replace("_", " "))))
 
+    if manages:
+        actions.append('<a class="button-link" href="/sessions/%d/match">Run / review matching</a>' % session["id"])
+
     role = ctx.user["role"]
     participant_links = []
     if role == "faculty":
         participant_links.append('<a href="/sessions/%d/projects">Post / manage projects</a>' % session["id"])
     if role == "student":
         participant_links.append('<a href="/sessions/%d/profile">My profile</a>' % session["id"])
+        participant_links.append('<a href="/sessions/%d/open-positions">Open positions</a>' % session["id"])
     participant_links.append('<a href="/sessions/%d/browse">Browse</a>' % session["id"])
+    participant_links.append('<a href="/matches/mine">My matches</a>')
 
     body = (
         '<p class="pill">%s</p> <p class="pill">mode: %s</p> '
@@ -1881,6 +1889,723 @@ def preferences_submit_post(ctx):
         return csrf_err
     session_id = fint(ctx.form, "session_id")
     return redirect("/preferences/submit?session_id=%d" % session_id if session_id else "/")
+
+
+# ---------------------------------------------------------------------------
+# Matching run + publish (R6.8), review (R7), contracting + placement (R8)
+# ---------------------------------------------------------------------------
+
+# Phases in which a matching run only reassigns unmatched students into
+# remaining capacity (R7.6). The initial run happens in 'matching'.
+REMATCH_PHASES = ("review",)
+
+CREDIT_RANGE_CHOICES = {
+    "1-2": ["1", "2"],
+    "1-3": ["1", "2", "3"],
+    "2-3": ["2", "3"],
+}
+
+
+def _fmt_pct(value):
+    """Render a 0-100 fit score as a percentage string."""
+    try:
+        return "%.0f%%" % float(value)
+    except (TypeError, ValueError):
+        return "0%"
+
+
+def _build_match_inputs(conn, session, restrict_unmatched=False):
+    """Build (students, projects, config) for the engine from session data.
+
+    When `restrict_unmatched` is True (rematch run, R7.6) only students without
+    an active match are included, and each project's capacity is reduced by the
+    number of slots already consumed by active matches so the run can never
+    exceed capacity.
+    """
+    sid = session["id"]
+    method = session["matching_method"]
+    weighting = session["weighting"]
+
+    # Students: submitted profiles only.
+    profiles = db.list_submitted_profiles(conn, sid)
+    students = []
+    for p in profiles:
+        uid = p["user_id"]
+        if restrict_unmatched and db.match_for_student(conn, sid, uid) is not None:
+            continue
+        major_ids = set(db.profile_major_ids(conn, p["id"]))
+        prefs = [r["project_id"] for r in db.get_preferences(
+            conn, sid, "student", student_id=uid)]
+        students.append(match_engine.StudentIn(
+            id=uid, major_ids=major_ids,
+            noncitizen=bool(p["noncitizen"]), prefs=prefs))
+
+    # Projects: published projects with positive remaining capacity.
+    projects = []
+    for proj in db.list_published_projects(conn, sid):
+        capacity = proj["capacity"] or proj["positions"] or 0
+        if restrict_unmatched:
+            capacity = capacity - db.project_filled_count(conn, sid, proj["id"])
+        if capacity <= 0:
+            continue
+        elig = set(db.project_eligible_major_ids(conn, proj["id"]))
+        must = elig if proj["major_policy"] == "must" else set()
+        prefer = elig if proj["major_policy"] == "prefer" else set()
+        # Faculty/project preference list (mutual mode).
+        fac_prefs = []
+        if method == "mutual":
+            fac_prefs = [r["student_id"] for r in db.get_preferences(
+                conn, sid, "project", project_id=proj["id"])]
+        projects.append(match_engine.ProjectIn(
+            id=proj["id"], capacity=capacity,
+            noncitizen_ok=bool(proj["noncitizen_eligible"]),
+            must_majors=must, prefer_majors=prefer, prefs=fac_prefs))
+
+    config = match_engine.Config(weighting=weighting)
+    return students, projects, config
+
+
+def _run_matching(conn, session, restrict_unmatched):
+    """Execute a matching run, persist a match_runs row + proposed matches.
+
+    Returns (run_id, result). Matches from this run are stored unpublished.
+    """
+    students, projects, config = _build_match_inputs(
+        conn, session, restrict_unmatched=restrict_unmatched)
+    result = match_engine.match(students, projects, config)
+
+    round_ = db.next_run_round(conn, session["id"])
+    config_snapshot = {
+        "matching_method": session["matching_method"],
+        "weighting": session["weighting"],
+        "restrict_unmatched": restrict_unmatched,
+        "student_count": len(students),
+        "project_count": len(projects),
+    }
+    stats_snapshot = {
+        "overall_fit": result.overall_fit,
+        "per_project_fit": {str(k): v for k, v in result.per_project_fit.items()},
+        "unmatched_students": result.unmatched_students,
+    }
+    run_id = db.create_match_run(
+        conn, session["id"], round_, result.overall_fit,
+        json.dumps(config_snapshot), json.dumps(stats_snapshot),
+        published=0, status="complete")
+    for a in result.assignments:
+        db.create_match(
+            conn, session["id"], run_id, a.student_id, a.project_id, round_,
+            student_fit=a.student_fit, project_fit=a.project_fit,
+            status="proposed", score=a.student_fit)
+    conn.commit()
+    return run_id, result
+
+
+def _user_label(conn, user_id):
+    u = db.get_user_by_id(conn, user_id)
+    if u is None:
+        return "Unknown"
+    return u["display_name"]
+
+
+def _match_preview_page(ctx, session, run, result=None):
+    """Render the preview of a run's proposed assignments + fit stats."""
+    matches = db.matches_for_run(ctx.conn, run["id"])
+    rows = []
+    for m in matches:
+        proj = db.get_project(ctx.conn, m["project_id"])
+        rows.append(
+            "<tr><td data-label=\"Student\">%s</td>"
+            "<td data-label=\"Project\">%s</td>"
+            "<td data-label=\"Student fit\">%s</td>"
+            "<td data-label=\"Project fit\">%s</td></tr>"
+            % (templates.esc(_user_label(ctx.conn, m["student_id"])),
+               templates.esc(proj["title"] if proj else "?"),
+               _fmt_pct(m["student_fit"]), _fmt_pct(m["project_fit"])))
+    table = ("<table><thead><tr><th>Student</th><th>Project</th>"
+             "<th>Student fit</th><th>Project fit</th></tr></thead>"
+             "<tbody>%s</tbody></table>" % "".join(rows)) if rows else \
+            "<p>No assignments were produced for this run.</p>"
+
+    # Per-project fit summary.
+    stats = json.loads(run["stats_json"] or "{}")
+    per_project = stats.get("per_project_fit", {})
+    pp_rows = []
+    for pid_str, fit in per_project.items():
+        proj = db.get_project(ctx.conn, int(pid_str))
+        pp_rows.append("<tr><td data-label=\"Project\">%s</td>"
+                       "<td data-label=\"Fit\">%s</td></tr>"
+                       % (templates.esc(proj["title"] if proj else pid_str),
+                          _fmt_pct(fit)))
+    pp_table = ("<table><thead><tr><th>Project</th><th>Fit</th></tr></thead>"
+                "<tbody>%s</tbody></table>" % "".join(pp_rows)) if pp_rows else ""
+
+    unmatched = stats.get("unmatched_students", [])
+    unmatched_html = ""
+    if unmatched:
+        names = ", ".join(templates.esc(_user_label(ctx.conn, uid)) for uid in unmatched)
+        unmatched_html = "<p><strong>Unmatched students:</strong> %s</p>" % names
+
+    published = run["published"]
+    publish_form = ""
+    if not published and db.can_manage_session(ctx.conn, session, ctx.user):
+        publish_form = (
+            '<form method="post" action="/sessions/%d/publish" class="inline">%s'
+            '<input type="hidden" name="run_id" value="%d">'
+            '<button type="submit">Publish this run to participants</button></form>'
+            % (session["id"], templates.csrf_input(ctx.user["csrf_token"]), run["id"]))
+    rerun_form = (
+        '<form method="post" action="/sessions/%d/match" class="inline">%s'
+        '<button type="submit">Run matching again</button></form>'
+        % (session["id"], templates.csrf_input(ctx.user["csrf_token"])))
+
+    state = '<p class="pill">%s</p>' % ("published" if published else "preview (not yet published)")
+    body = (
+        "%s"
+        '<p>Run #%d &middot; round %d &middot; overall fit: <strong>%s</strong></p>'
+        "%s"
+        '<section aria-labelledby="pa-h"><h2 id="pa-h">Proposed assignments</h2>%s</section>'
+        '<section aria-labelledby="pp-h"><h2 id="pp-h">Per-project fit</h2>%s</section>'
+        '<p>%s %s</p>'
+    ) % (state, run["id"], run["round"], _fmt_pct(run["overall_fit"]),
+         unmatched_html, table, pp_table, publish_form, rerun_form)
+    return html_response(templates.layout(
+        "Matching preview", templates.page("Matching results for %s" % templates.esc(session["name"]), body),
+        ctx.user))
+
+
+@route("POST", "/sessions/{id}/match")
+def session_match(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+    restrict = session["status"] in REMATCH_PHASES
+    run_id, _result = _run_matching(ctx.conn, session, restrict_unmatched=restrict)
+    return redirect("/sessions/%d/match/%d" % (session["id"], run_id))
+
+
+@route("GET", "/sessions/{id}/match")
+def session_match_latest(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+    run = db.latest_run(ctx.conn, session["id"])
+    if run is None:
+        body = ('<p>No matching run yet.</p>'
+                '<form method="post" action="/sessions/%d/match">%s'
+                '<button type="submit">Run matching</button></form>'
+                % (session["id"], templates.csrf_input(ctx.user["csrf_token"])))
+        return html_response(templates.layout(
+            "Matching", templates.page("Matching for %s" % templates.esc(session["name"]), body), ctx.user))
+    return _match_preview_page(ctx, session, run)
+
+
+@route("GET", "/sessions/{id}/match/{run_id}")
+def session_match_run(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+    try:
+        run_id = int(ctx.params.get("run_id"))
+    except (TypeError, ValueError):
+        return not_found("Run not found.")
+    run = db.get_match_run(ctx.conn, run_id)
+    if run is None or run["session_id"] != session["id"]:
+        return not_found("Run not found.")
+    return _match_preview_page(ctx, session, run)
+
+
+@route("POST", "/sessions/{id}/publish")
+def session_publish(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+    run_id = fint(ctx.form, "run_id")
+    run = db.get_match_run(ctx.conn, run_id) if run_id else db.latest_run(ctx.conn, session["id"])
+    if run is None or run["session_id"] != session["id"]:
+        return not_found("Run not found.")
+    db.publish_run(ctx.conn, run["id"])
+    # Notify each matched participant that results are available (R7.1).
+    for m in db.matches_for_run(ctx.conn, run["id"]):
+        if m["status"] in ("rejected", "rematch"):
+            continue
+        proj = db.get_project(ctx.conn, m["project_id"])
+        notify_service.notify(
+            ctx.conn, m["student_id"], kind="match_published",
+            subject="Your research match is ready",
+            body="You have a proposed match for '%s'." % (proj["title"] if proj else "a project"))
+        for mentor in db.project_mentors(ctx.conn, m["project_id"]):
+            notify_service.notify(
+                ctx.conn, mentor["user_id"], kind="match_published",
+                subject="A proposed match is ready to review",
+                body="A student was matched to '%s'." % (proj["title"] if proj else "your project"))
+    ctx.conn.commit()
+    return redirect("/sessions/%d/match/%d" % (session["id"], run["id"]))
+
+
+# ---------------------------------------------------------------------------
+# Participant review (R7.1-R7.3)
+# ---------------------------------------------------------------------------
+
+def _match_card(ctx, m, for_student):
+    proj = db.get_project(ctx.conn, m["project_id"])
+    student_name = _user_label(ctx.conn, m["student_id"])
+    title = proj["title"] if proj else "(project)"
+    csrf = templates.csrf_input(ctx.user["csrf_token"])
+    fit = _fmt_pct(m["student_fit"]) if for_student else _fmt_pct(m["project_fit"])
+    actions = []
+    status = m["status"]
+    if status in ("proposed", "accepted"):
+        if for_student:
+            actions.append(
+                '<form method="post" action="/matches/%d/accept" class="inline">%s'
+                '<button type="submit">Accept</button></form>' % (m["id"], csrf))
+            actions.append(
+                '<form method="post" action="/matches/%d/rematch" class="inline">%s'
+                '<button type="submit" class="secondary">Request rematch</button></form>'
+                % (m["id"], csrf))
+            if session_allows_super_interest(ctx.conn, m):
+                actions.append(
+                    '<form method="post" action="/matches/%d/super-interest" class="inline">%s'
+                    '<button type="submit" class="secondary">Super-interest</button></form>'
+                    % (m["id"], csrf))
+        else:
+            actions.append(
+                '<form method="post" action="/matches/%d/accept" class="inline">%s'
+                '<button type="submit">Accept</button></form>' % (m["id"], csrf))
+            actions.append(
+                '<form method="post" action="/matches/%d/reject" class="inline">%s'
+                '<button type="submit" class="secondary">Not a good match</button></form>'
+                % (m["id"], csrf))
+        actions.append('<a class="button-link" href="/matches/%d/contract">Contract</a>' % m["id"])
+    elif status == "finalized":
+        actions.append('<a class="button-link" href="/matches/%d/contract">View placement</a>' % m["id"])
+
+    who = ("Project: <strong>%s</strong>" % templates.esc(title)) if for_student else \
+          ("Student: <strong>%s</strong> for <strong>%s</strong>"
+           % (templates.esc(student_name), templates.esc(title)))
+    return (
+        '<li class="match-card"><p>%s</p>'
+        '<p class="pill">%s</p> <p class="pill">fit: %s</p>'
+        "<p>%s</p></li>" % (who, templates.esc(status), fit, " ".join(actions)))
+
+
+def session_allows_super_interest(conn, m):
+    session = db.get_session(conn, m["session_id"])
+    return bool(session and session["allow_super_interest"])
+
+
+@route("GET", "/matches/mine")
+def matches_mine(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    for_student = ctx.user["role"] == "student"
+    # Gather across all sessions the user participates in.
+    cards = []
+    for session in db.list_sessions(ctx.conn):
+        if not db.can_view_session(ctx.conn, session, ctx.user):
+            continue
+        for m in db.matches_visible_to_user(ctx.conn, session["id"], ctx.user):
+            cards.append(_match_card(ctx, m, for_student))
+    listing = '<ul class="match-list">%s</ul>' % "".join(cards) if cards else \
+              "<p>You have no published matches yet.</p>"
+    heading = "My match" if for_student else "Matches to review"
+    return html_response(templates.layout(heading, templates.page(heading, listing), ctx.user))
+
+
+def _load_match_for_party(ctx, require_student=False, require_faculty=False):
+    """Return (match, None) if the user is a party to the match, else (None, resp)."""
+    mid = fint_param(ctx, "id")
+    m = db.get_match(ctx.conn, mid) if mid else None
+    if m is None:
+        return None, not_found("Match not found.")
+    if not db.user_is_match_party(ctx.conn, m, ctx.user):
+        return None, forbidden("You are not a party to this match.")
+    if require_student and ctx.user["role"] != "student":
+        return None, forbidden("Only the student can do that.")
+    if require_faculty and ctx.user["role"] not in ("faculty", "admin", "manager"):
+        return None, forbidden("Only faculty can do that.")
+    return m, None
+
+
+@route("POST", "/matches/{id}/accept")
+def match_accept(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    m, resp = _load_match_for_party(ctx)
+    if resp:
+        return resp
+    if m["status"] in ("proposed", "accepted"):
+        db.update_match(ctx.conn, m["id"], status="accepted")
+        ctx.conn.commit()
+    return redirect("/matches/mine")
+
+
+@route("POST", "/matches/{id}/reject")
+def match_reject(ctx):
+    """Faculty 'not a good match': unmatch the student + notify them (R7.2)."""
+    guard = require_role(ctx, "faculty", "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    m, resp = _load_match_for_party(ctx, require_faculty=True)
+    if resp:
+        return resp
+    db.update_match(ctx.conn, m["id"], status="rejected")
+    proj = db.get_project(ctx.conn, m["project_id"])
+    notify_service.notify(
+        ctx.conn, m["student_id"], kind="rematch_needed",
+        subject="You need a new research match",
+        body="The faculty for '%s' determined it was not a good match. "
+             "Please browse open positions and request a rematch."
+             % (proj["title"] if proj else "your project"))
+    ctx.conn.commit()
+    return redirect("/matches/mine")
+
+
+@route("POST", "/matches/{id}/rematch")
+def match_rematch(ctx):
+    """Student requests a rematch (R7.3). Optionally target an open project."""
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    m, resp = _load_match_for_party(ctx, require_student=True)
+    if resp:
+        return resp
+    db.update_match(ctx.conn, m["id"], status="rematch")
+    session = db.get_session(ctx.conn, m["session_id"])
+
+    # Optional: the student targets a specific open project to approach another
+    # faculty member (R7.4). Create a fresh proposed match if there is capacity.
+    target_pid = fint(ctx.form, "project_id")
+    if target_pid:
+        proj = db.get_project(ctx.conn, target_pid)
+        if (proj and proj["session_id"] == session["id"] and proj["status"] == "published"
+                and _remaining_capacity(ctx.conn, session["id"], proj) > 0):
+            run = db.latest_run(ctx.conn, session["id"], published_only=True)
+            db.create_match(
+                ctx.conn, session["id"], run["id"] if run else None,
+                ctx.user["id"], target_pid, run["round"] if run else 1,
+                student_fit=0.0, project_fit=0.0, status="proposed")
+            for mentor in db.project_mentors(ctx.conn, target_pid):
+                notify_service.notify(
+                    ctx.conn, mentor["user_id"], kind="rematch_request",
+                    subject="A student requested to join your project",
+                    body="%s requested a rematch with '%s'."
+                         % (ctx.user["display_name"], proj["title"]))
+    # Notify managers that a rematch was requested.
+    for mgr in ctx.conn.execute(
+            "SELECT user_id FROM session_managers WHERE session_id = ?",
+            (session["id"],)).fetchall():
+        notify_service.notify(
+            ctx.conn, mgr["user_id"], kind="rematch_request",
+            subject="A student requested a rematch",
+            body="%s requested a rematch." % ctx.user["display_name"])
+    ctx.conn.commit()
+    return redirect("/sessions/%d/open-positions" % session["id"])
+
+
+@route("POST", "/matches/{id}/super-interest")
+def match_super_interest(ctx):
+    """Student signals super-interest (R7.5), only where the toggle is on."""
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    m, resp = _load_match_for_party(ctx, require_student=True)
+    if resp:
+        return resp
+    session = db.get_session(ctx.conn, m["session_id"])
+    if not session["allow_super_interest"]:
+        return forbidden("Super-interest is not enabled for this session.")
+    proj = db.get_project(ctx.conn, m["project_id"])
+    for mentor in db.project_mentors(ctx.conn, m["project_id"]):
+        notify_service.notify(
+            ctx.conn, mentor["user_id"], kind="super_interest",
+            subject="A student is super interested in your project",
+            body="%s is super interested in '%s'. Consider opening an extra slot."
+                 % (ctx.user["display_name"], proj["title"] if proj else "your project"))
+    ctx.conn.commit()
+    return redirect("/matches/mine")
+
+
+# ---------------------------------------------------------------------------
+# Rematch flow: open positions (R7.4)
+# ---------------------------------------------------------------------------
+
+def _remaining_capacity(conn, session_id, project):
+    cap = project["capacity"] or project["positions"] or 0
+    return cap - db.project_filled_count(conn, session_id, project["id"])
+
+
+@route("GET", "/sessions/{id}/open-positions")
+def open_positions(ctx):
+    """Students browse projects with remaining capacity and request a rematch."""
+    guard = require_role(ctx, "student")
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+
+    current = db.match_for_student(ctx.conn, session["id"], ctx.user["id"])
+    rematch_match = ctx.conn.execute(
+        "SELECT * FROM matches WHERE session_id = ? AND student_id = ? AND status = 'rematch' "
+        "ORDER BY id DESC LIMIT 1", (session["id"], ctx.user["id"])).fetchone()
+    rows = []
+    for proj in db.list_published_projects(ctx.conn, session["id"]):
+        remaining = _remaining_capacity(ctx.conn, session["id"], proj)
+        if remaining <= 0:
+            continue
+        # Build a rematch request against a prior rejected/rematch match row so
+        # the student always has a match id to act through.
+        anchor = rematch_match or current
+        action = ""
+        if anchor is not None:
+            action = (
+                '<form method="post" action="/matches/%d/rematch" class="inline">%s'
+                '<input type="hidden" name="project_id" value="%d">'
+                '<button type="submit">Request this project</button></form>'
+                % (anchor["id"], templates.csrf_input(ctx.user["csrf_token"]), proj["id"]))
+        rows.append(
+            "<tr><td data-label=\"Project\"><a href=\"/projects/%d\">%s</a></td>"
+            "<td data-label=\"Open slots\">%d</td><td data-label=\"\">%s</td></tr>"
+            % (proj["id"], templates.esc(proj["title"]), remaining, action))
+    table = ("<table><thead><tr><th>Project</th><th>Open slots</th><th></th></tr></thead>"
+             "<tbody>%s</tbody></table>" % "".join(rows)) if rows else \
+            "<p>No open positions remain in this session.</p>"
+    note = ("<p class=\"hint\">These are projects with capacity beyond their accepted "
+            "matches. Requesting one approaches that faculty member for a rematch.</p>")
+    body = note + table
+    return html_response(templates.layout(
+        "Open positions", templates.page("Open positions in %s" % templates.esc(session["name"]), body),
+        ctx.user))
+
+
+# ---------------------------------------------------------------------------
+# Contracting + placement (R8.1-R8.4)
+# ---------------------------------------------------------------------------
+
+def _credit_choices_for_project(project):
+    """Return the list of selectable credit counts for a project, or [] if the
+    credit option is a single fixed value or the project is paid."""
+    if project["comp_type"] != "credit":
+        return []
+    opt = project["credit_option"] or ""
+    return CREDIT_RANGE_CHOICES.get(opt, [])
+
+
+def _contract_page(ctx, m, contract, errors=None):
+    errors = errors or {}
+    proj = db.get_project(ctx.conn, m["project_id"])
+    session = db.get_session(ctx.conn, m["session_id"])
+    student_name = _user_label(ctx.conn, m["student_id"])
+    csrf = templates.csrf_input(ctx.user["csrf_token"])
+    terms = json.loads(contract["terms_json"] or "{}")
+    is_student = ctx.user["role"] == "student"
+    signed_student = bool(contract["student_signed_at"])
+    signed_faculty = bool(contract["faculty_signed_at"])
+
+    credit_choices = _credit_choices_for_project(proj)
+    comp_line = ""
+    credit_field = ""
+    if proj["comp_type"] == "credit":
+        if credit_choices:
+            current = contract["final_credit"] or terms.get("final_credit", "")
+            opts = "".join(
+                '<option value="%s"%s>%s credit(s)</option>'
+                % (c, " selected" if current == c else "", c) for c in credit_choices)
+            credit_field = (
+                '<p class="field"><label for="f-final_credit">Final credit count '
+                '(range %s)</label><select id="f-final_credit" name="final_credit">'
+                '<option value="">-- choose --</option>%s</select>%s</p>'
+                % (templates.esc(proj["credit_option"]), opts,
+                   templates.field_error(errors.get("final_credit"))))
+            comp_line = "For credit (flexible range %s)" % templates.esc(proj["credit_option"])
+        else:
+            comp_line = "For credit (%s)" % templates.esc(proj["credit_option"] or "n/a")
+    else:
+        rate = proj["hourly_rate"]
+        comp_line = "Paid position%s" % (" at $%.2f/hr" % rate if rate else "")
+
+    responsibilities = terms.get("responsibilities", proj["responsibilities"] or "")
+
+    placement_html = ""
+    if contract["placement_ref"]:
+        placement_html = ('<p class="flash" role="status">Placement recorded: '
+                          '<strong>%s</strong>. This match is finalized.</p>'
+                          % templates.esc(contract["placement_ref"]))
+
+    sign_state = (
+        "<ul><li>Student signed: %s</li><li>Faculty signed: %s</li></ul>"
+        % (templates.tz_label(contract["student_signed_at"], session["timezone"]) if signed_student else "not yet",
+           templates.tz_label(contract["faculty_signed_at"], session["timezone"]) if signed_faculty else "not yet"))
+
+    already_signed = (is_student and signed_student) or (not is_student and signed_faculty)
+    form = ""
+    if not contract["placement_ref"]:
+        button = "Sign contract"
+        if already_signed:
+            button = "Update terms"
+        form = (
+            '<form method="post" action="/matches/%d/contract" class="stacked">%s'
+            "%s"  # credit field
+            '<p class="field"><label for="f-responsibilities">Responsibilities</label>'
+            '<textarea id="f-responsibilities" name="responsibilities" rows="4">%s</textarea></p>'
+            '<p class="field check"><label><input type="checkbox" name="sign" value="1"%s> '
+            'I agree to these terms and sign as %s</label></p>'
+            '<p><button type="submit">%s</button></p></form>'
+            % (m["id"], csrf, credit_field, templates.esc(responsibilities),
+               " checked" if already_signed else "",
+               "the student" if is_student else "faculty", button))
+
+    body = (
+        "%s"
+        '<p><strong>Student:</strong> %s</p>'
+        '<p><strong>Project:</strong> %s</p>'
+        '<p><strong>Compensation:</strong> %s</p>'
+        "%s"  # signing state
+        "%s"  # form
+    ) % (placement_html, templates.esc(student_name),
+         templates.esc(proj["title"] if proj else "?"), comp_line, sign_state, form)
+    return html_response(templates.layout(
+        "Contract", templates.page("Research placement contract", body), ctx.user))
+
+
+@route("GET", "/matches/{id}/contract")
+def contract_get(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    m, resp = _load_match_for_party(ctx)
+    if resp:
+        return resp
+    cid = db.ensure_contract(ctx.conn, m["id"])
+    ctx.conn.commit()
+    contract = db.get_contract(ctx.conn, m["id"])
+    return _contract_page(ctx, m, contract)
+
+
+@route("POST", "/matches/{id}/contract")
+def contract_post(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    m, resp = _load_match_for_party(ctx)
+    if resp:
+        return resp
+    db.ensure_contract(ctx.conn, m["id"])
+    contract = db.get_contract(ctx.conn, m["id"])
+    if contract["placement_ref"]:
+        return redirect("/matches/%d/contract" % m["id"])  # already placed
+
+    proj = db.get_project(ctx.conn, m["project_id"])
+    is_student = ctx.user["role"] == "student"
+    credit_choices = _credit_choices_for_project(proj)
+
+    terms = json.loads(contract["terms_json"] or "{}")
+    terms["responsibilities"] = fv(ctx.form, "responsibilities")
+
+    final_credit = contract["final_credit"]
+    errors = {}
+    if credit_choices:
+        chosen = fv(ctx.form, "final_credit")
+        if chosen:
+            if chosen not in credit_choices:
+                errors["final_credit"] = "Choose a valid credit count."
+            else:
+                final_credit = chosen
+                terms["final_credit"] = chosen
+
+    signing = fv(ctx.form, "sign") == "1"
+    # A flexible-credit project must have its final credit chosen before the
+    # placement can complete (R8.2).
+    if signing and credit_choices and not final_credit:
+        errors["final_credit"] = "Select the final credit count before signing."
+
+    if errors:
+        # Persist responsibilities even on error, then re-render.
+        db.update_contract(ctx.conn, contract["id"], terms_json=json.dumps(terms))
+        ctx.conn.commit()
+        contract = db.get_contract(ctx.conn, m["id"])
+        return _contract_page(ctx, m, contract, errors)
+
+    cols = {"terms_json": json.dumps(terms)}
+    if final_credit:
+        cols["final_credit"] = final_credit
+    if signing:
+        if is_student:
+            cols["student_signed_at"] = db.utcnow()
+        else:
+            cols["faculty_signed_at"] = db.utcnow()
+    db.update_contract(ctx.conn, contract["id"], **cols)
+    ctx.conn.commit()
+
+    # Record compensation detail in terms for the placement.
+    contract = db.get_contract(ctx.conn, m["id"])
+    both_signed = contract["student_signed_at"] and contract["faculty_signed_at"]
+    if both_signed and not contract["placement_ref"]:
+        if proj["comp_type"] == "credit":
+            placement_ref = workday.assign_course_section(ctx.conn, m, proj)
+        else:
+            placement_ref = workday.add_hourly_job(ctx.conn, m, proj)
+        terms = json.loads(contract["terms_json"] or "{}")
+        terms["comp_type"] = proj["comp_type"]
+        if proj["comp_type"] == "credit":
+            terms["credit"] = contract["final_credit"] or proj["credit_option"]
+        else:
+            terms["hourly_rate"] = proj["hourly_rate"]
+        db.update_contract(ctx.conn, contract["id"], status="placed",
+                           placement_ref=placement_ref, terms_json=json.dumps(terms))
+        db.update_match(ctx.conn, m["id"], status="finalized")
+        notify_service.notify(
+            ctx.conn, m["student_id"], kind="placement",
+            subject="Your research placement is confirmed",
+            body="Placement reference: %s" % placement_ref)
+        ctx.conn.commit()
+    return redirect("/matches/%d/contract" % m["id"])
 
 
 # ---------------------------------------------------------------------------

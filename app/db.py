@@ -248,8 +248,11 @@ CREATE TABLE IF NOT EXISTS match_runs (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id   INTEGER NOT NULL REFERENCES match_sessions(id) ON DELETE CASCADE,
     status       TEXT NOT NULL DEFAULT 'pending',  -- 'pending'|'complete'|'failed'
-    config_json  TEXT NOT NULL DEFAULT '{}',
-    stats_json   TEXT NOT NULL DEFAULT '{}',
+    round        INTEGER NOT NULL DEFAULT 1,       -- 1 = initial run; +1 per rematch run
+    overall_fit  REAL NOT NULL DEFAULT 0.0,        -- overall fit % for this run (R6.8)
+    published    INTEGER NOT NULL DEFAULT 0,       -- 0 = preview only; 1 = visible to participants
+    config_json  TEXT NOT NULL DEFAULT '{}',       -- config_snapshot (weighting, method, ...)
+    stats_json   TEXT NOT NULL DEFAULT '{}',       -- per-project / per-student fit snapshot
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
 );
@@ -260,20 +263,28 @@ CREATE TABLE IF NOT EXISTS matches (
     run_id      INTEGER REFERENCES match_runs(id) ON DELETE SET NULL,
     student_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     project_id  INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    status      TEXT NOT NULL DEFAULT 'proposed', -- 'proposed'|'accepted'|'declined'|'rematch'
+    round       INTEGER NOT NULL DEFAULT 1,
+    -- 'proposed'|'accepted'|'rejected'|'rematch'|'finalized'
+    status      TEXT NOT NULL DEFAULT 'proposed',
     score       REAL,
+    student_fit REAL NOT NULL DEFAULT 0.0,
+    project_fit REAL NOT NULL DEFAULT 0.0,
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS contracts (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    match_id    INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
-    status      TEXT NOT NULL DEFAULT 'draft',  -- 'draft'|'sent'|'signed'|'placed'
-    terms       TEXT NOT NULL DEFAULT '',
-    signed_at   TEXT,
-    created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    match_id         INTEGER NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+    status           TEXT NOT NULL DEFAULT 'draft',  -- 'draft'|'signed'|'placed'
+    terms_json       TEXT NOT NULL DEFAULT '{}',     -- credit count or pay + responsibilities (R8.1)
+    final_credit     TEXT NOT NULL DEFAULT '',       -- chosen credit count for a flexible range (R8.2)
+    student_signed_at TEXT,
+    faculty_signed_at TEXT,
+    placement_ref    TEXT NOT NULL DEFAULT '',       -- synthesized at placement (R8.4)
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL,
+    UNIQUE (match_id)
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -783,3 +794,174 @@ def update_profile(conn, profile_id, **cols):
         "UPDATE student_profiles SET %s WHERE id = ?" % assignments,
         [cols[k] for k in keys] + [profile_id],
     )
+
+
+# ---------------------------------------------------------------------------
+# Matching runs, matches, contracts (R6.8, R7, R8)
+# ---------------------------------------------------------------------------
+
+def _update_row(conn, table, pk_col, pk_value, cols):
+    if not cols:
+        return
+    cols["updated_at"] = utcnow()
+    keys = list(cols.keys())
+    assignments = ", ".join("%s = ?" % k for k in keys)
+    conn.execute(
+        "UPDATE %s SET %s WHERE %s = ?" % (table, assignments, pk_col),
+        [cols[k] for k in keys] + [pk_value],
+    )
+
+
+def next_run_round(conn, session_id):
+    """Return the round number to use for the next run (1-based, increments)."""
+    row = conn.execute(
+        "SELECT COALESCE(MAX(round), 0) AS r FROM match_runs WHERE session_id = ?",
+        (session_id,),
+    ).fetchone()
+    return (row["r"] or 0) + 1
+
+
+def create_match_run(conn, session_id, round_, overall_fit, config_json, stats_json,
+                     published=0, status="complete"):
+    return insert(
+        conn, "match_runs", session_id=session_id, round=round_, status=status,
+        overall_fit=overall_fit, published=published,
+        config_json=config_json, stats_json=stats_json, updated_at=utcnow(),
+    )
+
+
+def get_match_run(conn, run_id):
+    return conn.execute("SELECT * FROM match_runs WHERE id = ?", (run_id,)).fetchone()
+
+
+def list_match_runs(conn, session_id):
+    return conn.execute(
+        "SELECT * FROM match_runs WHERE session_id = ? ORDER BY round DESC, id DESC",
+        (session_id,),
+    ).fetchall()
+
+
+def latest_run(conn, session_id, published_only=False):
+    if published_only:
+        return conn.execute(
+            "SELECT * FROM match_runs WHERE session_id = ? AND published = 1 "
+            "ORDER BY round DESC, id DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+    return conn.execute(
+        "SELECT * FROM match_runs WHERE session_id = ? ORDER BY round DESC, id DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+
+
+def publish_run(conn, run_id):
+    _update_row(conn, "match_runs", "id", run_id, {"published": 1})
+
+
+def create_match(conn, session_id, run_id, student_id, project_id, round_,
+                 student_fit, project_fit, status="proposed", score=None):
+    return insert(
+        conn, "matches", session_id=session_id, run_id=run_id, student_id=student_id,
+        project_id=project_id, round=round_, status=status, score=score,
+        student_fit=student_fit, project_fit=project_fit, updated_at=utcnow(),
+    )
+
+
+def get_match(conn, match_id):
+    return conn.execute("SELECT * FROM matches WHERE id = ?", (match_id,)).fetchone()
+
+
+def update_match(conn, match_id, **cols):
+    _update_row(conn, "matches", "id", match_id, cols)
+
+
+def matches_for_run(conn, run_id):
+    return conn.execute(
+        "SELECT * FROM matches WHERE run_id = ? ORDER BY project_id, student_id",
+        (run_id,),
+    ).fetchall()
+
+
+def list_active_matches(conn, session_id):
+    """Matches still in play (not rejected/rematched) for the session."""
+    return conn.execute(
+        "SELECT * FROM matches WHERE session_id = ? "
+        "AND status IN ('proposed', 'accepted', 'finalized') "
+        "ORDER BY project_id, student_id",
+        (session_id,),
+    ).fetchall()
+
+
+def match_for_student(conn, session_id, student_id):
+    """The student's current active match in a session, if any."""
+    return conn.execute(
+        "SELECT * FROM matches WHERE session_id = ? AND student_id = ? "
+        "AND status IN ('proposed', 'accepted', 'finalized') "
+        "ORDER BY id DESC LIMIT 1",
+        (session_id, student_id),
+    ).fetchone()
+
+
+def matches_for_project(conn, session_id, project_id, statuses=None):
+    statuses = statuses or ("proposed", "accepted", "finalized")
+    placeholders = ", ".join("?" for _ in statuses)
+    return conn.execute(
+        "SELECT * FROM matches WHERE session_id = ? AND project_id = ? "
+        "AND status IN (%s)" % placeholders,
+        (session_id, project_id, *statuses),
+    ).fetchall()
+
+
+def project_filled_count(conn, session_id, project_id):
+    """Number of slots consumed by active matches for a project."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM matches WHERE session_id = ? AND project_id = ? "
+        "AND status IN ('proposed', 'accepted', 'finalized')",
+        (session_id, project_id),
+    ).fetchone()
+    return row["n"]
+
+
+def matches_visible_to_user(conn, session_id, user):
+    """Published matches that `user` is a party to (student or project mentor)."""
+    run = latest_run(conn, session_id, published_only=True)
+    if run is None:
+        return []
+    rows = matches_for_run(conn, run["id"])
+    out = []
+    for m in rows:
+        if m["status"] in ("rejected", "rematch"):
+            continue
+        if user["role"] == "student" and m["student_id"] == user["id"]:
+            out.append(m)
+        elif user["role"] in ("faculty", "admin", "manager") and is_project_mentor(
+                conn, m["project_id"], user["id"]):
+            out.append(m)
+    return out
+
+
+def user_is_match_party(conn, match, user):
+    """True if `user` is the matched student or a mentor on the matched project."""
+    if user["role"] == "student":
+        return match["student_id"] == user["id"]
+    if user["role"] in ("faculty", "admin", "manager"):
+        return is_project_mentor(conn, match["project_id"], user["id"])
+    return False
+
+
+def get_contract(conn, match_id):
+    return conn.execute(
+        "SELECT * FROM contracts WHERE match_id = ?", (match_id,)
+    ).fetchone()
+
+
+def ensure_contract(conn, match_id):
+    existing = get_contract(conn, match_id)
+    if existing is not None:
+        return existing["id"]
+    return insert(conn, "contracts", match_id=match_id, status="draft",
+                  terms_json="{}", updated_at=utcnow())
+
+
+def update_contract(conn, contract_id, **cols):
+    _update_row(conn, "contracts", "id", contract_id, cols)

@@ -53,3 +53,54 @@ def list_majors(conn):
         "SELECT id, name, kind FROM majors ORDER BY name"
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Placement synthesis (R8.4). In production these call Workday to register a
+# student in a course section (for-credit) or open an hourly job requisition
+# (for-pay). The stub derives a deterministic, human-readable placement_ref
+# from the project's department and the match id so the demo can show a result.
+# ---------------------------------------------------------------------------
+
+# Department name -> course subject prefix for a synthesized section code.
+_SUBJECT_PREFIXES = {
+    "Biology": "BIOL",
+    "Materials Engineering": "MSE",
+    "Chemistry": "CHEM",
+}
+
+
+def _subject_for_project(conn, project):
+    """Return a short subject prefix (e.g. 'BIOL') for a project row."""
+    dept_id = project["primary_department_id"] if "primary_department_id" in project.keys() else None
+    name = None
+    if dept_id:
+        row = conn.execute(
+            "SELECT name FROM departments WHERE id = ?", (dept_id,)
+        ).fetchone()
+        if row is not None:
+            name = row["name"]
+    if name and name in _SUBJECT_PREFIXES:
+        return _SUBJECT_PREFIXES[name]
+    if name:
+        # Fall back to the first four uppercase letters of the department name.
+        letters = "".join(ch for ch in name.upper() if ch.isalpha())
+        return (letters[:4] or "RSCH")
+    return "RSCH"
+
+
+def assign_course_section(conn, match, project):
+    """Synthesize a for-credit course section reference, e.g. 'BIOL 2900-34'.
+
+    The catalog number is a fixed research-course number (2900); the section
+    suffix is derived from the match id so each placement gets a distinct,
+    stable code.
+    """
+    subject = _subject_for_project(conn, project)
+    section = 10 + (match["id"] % 90)  # two-digit section 10..99
+    return "%s 2900-%02d" % (subject, section)
+
+
+def add_hourly_job(conn, match, project):
+    """Synthesize a for-pay hourly job requisition reference, e.g. 'JOB-000042'."""
+    return "JOB-%06d" % match["id"]
