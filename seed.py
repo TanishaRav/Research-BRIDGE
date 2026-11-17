@@ -181,6 +181,21 @@ def seed():
             for mid in elig:
                 db.insert(conn, "project_eligible_majors", project_id=pid, major_id=mid)
 
+        # --- Ratings (R12.1) ----------------------------------------------
+        # The Biology session has show_ratings on. Give Dr. Rivera >= 5 distinct
+        # raters so an average surfaces; give Dr. Okafor only a few so the
+        # >=5-rater threshold visibly suppresses their average.
+        rater_ids = [uid for uid, _m in students] + [manager]
+        rivera_stars = [5, 4, 5, 4, 5, 3]  # 6 distinct raters
+        for rid, stars in zip(rater_ids, rivera_stars):
+            db.insert(conn, "ratings", session_id=bio_session, rater_id=rid,
+                      subject_id=prof_bio1, stars=stars,
+                      comment="Great mentor.", updated_at=now)
+        for rid, stars in zip(rater_ids[:3], [5, 4, 4]):  # only 3 raters
+            db.insert(conn, "ratings", session_id=bio_session, rater_id=rid,
+                      subject_id=prof_bio2, stars=stars,
+                      comment="Helpful.", updated_at=now)
+
         conn.commit()
     finally:
         conn.close()

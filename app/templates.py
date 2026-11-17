@@ -25,10 +25,12 @@ def _nav(user):
         role = user["role"]
         if role in ("admin", "manager"):
             links.append('<a href="/sessions">Sessions</a>')
+            links.append('<a href="/admin/sessions">Reports</a>')
         if role == "faculty":
             links.append('<a href="/sessions">My projects</a>')
         if role == "student":
             links.append('<a href="/sessions">Browse sessions</a>')
+        links.append('<a href="/inbox">Inbox</a>')
         name = esc(user["display_name"])
         links.append(
             '<form method="post" action="/logout" class="nav-logout">'

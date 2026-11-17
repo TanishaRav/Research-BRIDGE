@@ -28,6 +28,9 @@ import json
 from app import db
 from app import sanitize
 from app import templates
+from app.services import cyhire as cyhire_service
+from app.services import export as export_service
+from app.services import ics as ics_service
 from app.services import notify as notify_service
 from app.services import workday
 from matching import engine as match_engine
@@ -806,6 +809,9 @@ def session_detail(ctx):
         participant_links.append('<a href="/sessions/%d/open-positions">Open positions</a>' % session["id"])
     participant_links.append('<a href="/sessions/%d/browse">Browse</a>' % session["id"])
     participant_links.append('<a href="/matches/mine">My matches</a>')
+    participant_links.append('<a href="/reminders.ics?session_id=%d">Calendar reminders (.ics)</a>' % session["id"])
+    if manages:
+        participant_links.append('<a href="/sessions/%d/reports">Reports</a>' % session["id"])
 
     body = (
         '<p class="pill">%s</p> <p class="pill">mode: %s</p> '
@@ -1194,6 +1200,10 @@ def project_detail(ctx):
     guard = require_login(ctx)
     if guard:
         return guard
+    # The literal /projects/export path also matches this pattern (id="export");
+    # delegate to the batch export handler so both routes coexist.
+    if ctx.params.get("id") == "export":
+        return project_export_batch(ctx)
     pid = fint_param(ctx, "id")
     project = db.get_project(ctx.conn, pid) if pid else None
     if project is None:
@@ -1202,10 +1212,32 @@ def project_detail(ctx):
     if not db.can_view_session(ctx.conn, session, ctx.user):
         return forbidden("You do not have access to this project.")
 
+    # CyHire forward action, shown to editors/managers once the session has
+    # ended (closed) and the project still has unfilled openings (R11.1).
+    cyhire_html = ""
+    if (session["status"] == "closed"
+            and _remaining_capacity(ctx.conn, session["id"], project) > 0
+            and (db.is_project_mentor(ctx.conn, project["id"], ctx.user["id"])
+                 or db.can_manage_session(ctx.conn, session, ctx.user))):
+        cyhire_html = (
+            '<section aria-labelledby="cy-h"><h2 id="cy-h">CyHire</h2>'
+            '<p>This session has ended and this project still has unfilled openings.</p>'
+            '<form method="post" action="/projects/%d/cyhire" class="inline">%s'
+            '<button type="submit">Forward unfilled opening(s) to CyHire</button></form>'
+            "</section>"
+            % (project["id"], templates.csrf_input(ctx.user["csrf_token"])))
+
+    export_links = (
+        '<section aria-labelledby="ex-h"><h2 id="ex-h">Export</h2>'
+        '<p><a href="/projects/%d/export.html">HTML (email) view</a> &middot; '
+        '<a href="/projects/%d/export.pdf">Print / PDF view</a></p></section>'
+        % (project["id"], project["id"]))
+
     # Editors get the edit form prefilled; others get a read-only view.
     if _can_edit_project(ctx, project):
         values = _project_to_values(ctx.conn, project)
-        return html_response(_project_form(ctx, session, values, project=project))
+        full = _project_form(ctx, session, values, project=project)
+        return html_response(_wrap_with_section(full, export_links + cyhire_html))
 
     mentors = db.project_mentors(ctx.conn, project["id"])
     mentor_html = ", ".join(
@@ -1213,16 +1245,19 @@ def project_detail(ctx):
         for m in mentors
     )
     favs = db.favorite_count(ctx.conn, project["id"])
+    badge = _project_rating_badge(ctx.conn, session, project["id"])
     body = (
         "<p>%s</p>"
         "<p><strong>Mentors:</strong> %s</p>"
-        "<p><strong>Positions:</strong> %d &middot; <strong>Compensation:</strong> %s</p>"
+        "<p><strong>Positions:</strong> %d &middot; <strong>Compensation:</strong> %s %s</p>"
         '<p class="popularity">%d student(s) favored this.</p>'
         '<div class="rich">%s</div>'
+        "%s%s"
     ) % (
         templates.esc(session["name"]), mentor_html, project["positions"],
-        templates.esc(project["comp_type"]), favs,
+        templates.esc(project["comp_type"]), badge, favs,
         project["description"],  # already sanitized at write time
+        export_links, cyhire_html,
     )
     return html_response(templates.layout(project["title"], templates.page(templates.esc(project["title"]), body), ctx.user))
 
@@ -1628,10 +1663,11 @@ def _student_browse(ctx, session):
             % (templates.csrf_input(ctx.user["csrf_token"]), session["id"], p["id"],
                "remove" if favored else "add", "Unfavorite" if favored else "Favorite")
         )
+        badge = _project_rating_badge(ctx.conn, session, p["id"])
         rows.append(
-            "<tr><td data-label=\"Project\"><a href=\"/projects/%d\">%s</a></td>"
+            "<tr><td data-label=\"Project\"><a href=\"/projects/%d\">%s</a> %s</td>"
             "<td data-label=\"Favorited by\">%d</td><td data-label=\"\">%s</td></tr>"
-            % (p["id"], templates.esc(p["title"]), count, fav_btn)
+            % (p["id"], templates.esc(p["title"]), badge, count, fav_btn)
         )
     table = ("<table><thead><tr><th>Project</th><th>Favorited by</th><th></th></tr></thead>"
              "<tbody>%s</tbody></table>" % "".join(rows)) if rows else "<p>No matching projects.</p>"
@@ -1914,6 +1950,25 @@ def _fmt_pct(value):
         return "0%"
 
 
+# Minimum distinct raters before an average rating may be shown (R12.1).
+RATING_MIN_RATERS = 5
+
+
+def _project_rating_badge(conn, session, project_id):
+    """Return an HTML rating badge for a project, or '' when it must stay hidden.
+
+    Shown only where the session's show_ratings toggle is enabled AND the
+    project has at least RATING_MIN_RATERS distinct raters (R12.1).
+    """
+    if not session or not session["show_ratings"]:
+        return ""
+    avg, raters = db.project_rating_summary(conn, project_id)
+    if avg is None or raters < RATING_MIN_RATERS:
+        return ""
+    return ('<span class="rating" title="%d raters">&#9733; %.1f (%d)</span>'
+            % (raters, avg, raters))
+
+
 def _build_match_inputs(conn, session, restrict_unmatched=False):
     """Build (students, projects, config) for the engine from session data.
 
@@ -2155,13 +2210,13 @@ def session_publish(ctx):
         if m["status"] in ("rejected", "rematch"):
             continue
         proj = db.get_project(ctx.conn, m["project_id"])
-        notify_service.notify(
-            ctx.conn, m["student_id"], kind="match_published",
+        notify_service.send(
+            ctx.conn, m["student_id"], channel="email", kind="match_published",
             subject="Your research match is ready",
             body="You have a proposed match for '%s'." % (proj["title"] if proj else "a project"))
         for mentor in db.project_mentors(ctx.conn, m["project_id"]):
-            notify_service.notify(
-                ctx.conn, mentor["user_id"], kind="match_published",
+            notify_service.send(
+                ctx.conn, mentor["user_id"], channel="email", kind="match_published",
                 subject="A proposed match is ready to review",
                 body="A student was matched to '%s'." % (proj["title"] if proj else "your project"))
     ctx.conn.commit()
@@ -2606,6 +2661,426 @@ def contract_post(ctx):
             body="Placement reference: %s" % placement_ref)
         ctx.conn.commit()
     return redirect("/matches/%d/contract" % m["id"])
+
+
+# ---------------------------------------------------------------------------
+# Notifications & inbox (R9.1, R9.3)
+# ---------------------------------------------------------------------------
+
+@route("GET", "/inbox")
+def inbox(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    notes = db.list_notifications(ctx.conn, ctx.user["id"])
+    rows = []
+    for n in notes:
+        unread = not n["is_read"]
+        mark = ""
+        if unread:
+            mark = (
+                '<form method="post" action="/inbox/%d/read" class="inline">%s'
+                '<button type="submit">Mark read</button></form>'
+                % (n["id"], templates.csrf_input(ctx.user["csrf_token"])))
+        rows.append(
+            '<li class="note %s"><p><strong>%s</strong> '
+            '<span class="pill">%s</span> %s</p><p>%s</p>%s</li>'
+            % ("unread" if unread else "read",
+               templates.esc(n["subject"] or n["kind"]),
+               templates.esc(n["channel"]),
+               '<span class="pill">new</span>' if unread else "",
+               templates.esc(n["body"]), mark))
+    listing = '<ul class="inbox">%s</ul>' % "".join(rows) if rows else "<p>No notifications yet.</p>"
+    mark_all = ""
+    if any(not n["is_read"] for n in notes):
+        mark_all = (
+            '<form method="post" action="/inbox/read-all" class="inline">%s'
+            '<button type="submit">Mark all read</button></form>'
+            % templates.csrf_input(ctx.user["csrf_token"]))
+    body = mark_all + listing
+    return html_response(templates.layout("Inbox", templates.page("Your inbox", body), ctx.user))
+
+
+@route("POST", "/inbox/{id}/read")
+def inbox_read(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    nid = fint_param(ctx, "id")
+    if nid is not None:
+        db.mark_notification_read(ctx.conn, nid, ctx.user["id"])
+        ctx.conn.commit()
+    return redirect("/inbox")
+
+
+@route("POST", "/inbox/read-all")
+def inbox_read_all(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    db.mark_all_notifications_read(ctx.conn, ctx.user["id"])
+    ctx.conn.commit()
+    return redirect("/inbox")
+
+
+# ---------------------------------------------------------------------------
+# Reporting & export (R10.1-R10.5)
+# ---------------------------------------------------------------------------
+
+def _report_rows(conn, session):
+    """Build the structured report data for a session (used by HTML + CSV)."""
+    sid = session["id"]
+    students = db.session_student_participants(conn, sid)
+    faculty = db.session_faculty_participants(conn, sid)
+    projects = db.list_projects(conn, sid)
+    total_slots = sum((p["positions"] or 0) for p in projects)
+    pref_projects = db.most_preferred_projects(conn, sid)
+    pref_students = db.most_preferred_students(conn, sid)
+    run = db.latest_run(conn, sid, published_only=True) or db.latest_run(conn, sid)
+    return {
+        "students": students,
+        "faculty": faculty,
+        "projects": projects,
+        "total_slots": total_slots,
+        "pref_projects": pref_projects,
+        "pref_students": pref_students,
+        "run": run,
+    }
+
+
+@route("GET", "/sessions/{id}/reports")
+def session_reports(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+    data = _report_rows(ctx.conn, session)
+
+    student_names = ", ".join(
+        templates.esc("%s %s" % (s["given_name"], s["family_name"]) or s["display_name"])
+        for s in data["students"]) or "none"
+    faculty_names = ", ".join(templates.esc(f["display_name"]) for f in data["faculty"]) or "none"
+
+    proj_rows = "".join(
+        "<tr><td data-label=\"Project\">%s</td><td data-label=\"Slots\">%d</td></tr>"
+        % (templates.esc(p["title"]), p["positions"] or 0)
+        for p in data["projects"]) or "<tr><td colspan=\"2\">No projects.</td></tr>"
+
+    pref_proj_rows = "".join(
+        "<tr><td data-label=\"Project\">%s</td><td data-label=\"Favorites\">%d</td>"
+        "<td data-label=\"Ranked by students\">%d</td></tr>"
+        % (templates.esc(p["title"]), p["favorites"], p["prefs"])
+        for p in data["pref_projects"]) or "<tr><td colspan=\"3\">No data.</td></tr>"
+
+    pref_stud_rows = "".join(
+        "<tr><td data-label=\"Student\">%s</td><td data-label=\"Times ranked by faculty\">%d</td></tr>"
+        % (templates.esc(s["display_name"]), s["times_ranked"])
+        for s in data["pref_students"]) or "<tr><td colspan=\"2\">No data.</td></tr>"
+
+    fit_section = "<p>No matching run has been recorded yet.</p>"
+    run = data["run"]
+    if run is not None:
+        stats = json.loads(run["stats_json"] or "{}")
+        per_project = stats.get("per_project_fit", {})
+        pp_rows = "".join(
+            "<tr><td data-label=\"Project\">%s</td><td data-label=\"Fit\">%s</td></tr>"
+            % (templates.esc((db.get_project(ctx.conn, int(pid)) or {"title": pid})["title"]
+                             if db.get_project(ctx.conn, int(pid)) else pid),
+               _fmt_pct(fit))
+            for pid, fit in per_project.items()) or "<tr><td colspan=\"2\">No per-project fit.</td></tr>"
+        matches = db.matches_for_run(ctx.conn, run["id"])
+        ps_rows = "".join(
+            "<tr><td data-label=\"Student\">%s</td><td data-label=\"Fit\">%s</td></tr>"
+            % (templates.esc(_user_label(ctx.conn, m["student_id"])), _fmt_pct(m["student_fit"]))
+            for m in matches if m["status"] not in ("rejected", "rematch")
+        ) or "<tr><td colspan=\"2\">No matched students.</td></tr>"
+        fit_section = (
+            "<p>Overall fit (run #%d): <strong>%s</strong></p>"
+            "<h3>Per-project fit</h3><table><thead><tr><th>Project</th><th>Fit</th></tr>"
+            "</thead><tbody>%s</tbody></table>"
+            "<h3>Per-student fit</h3><table><thead><tr><th>Student</th><th>Fit</th></tr>"
+            "</thead><tbody>%s</tbody></table>"
+        ) % (run["id"], _fmt_pct(run["overall_fit"]), pp_rows, ps_rows)
+
+    body = (
+        '<p><a class="button-link" href="/sessions/%d/reports.csv">Download CSV</a></p>'
+        '<section aria-labelledby="part-h"><h2 id="part-h">Participants</h2>'
+        "<p><strong>Students (%d):</strong> %s</p>"
+        "<p><strong>Faculty (%d):</strong> %s</p></section>"
+        '<section aria-labelledby="proj-h"><h2 id="proj-h">Projects (%d) &middot; total slots: %d</h2>'
+        "<table><thead><tr><th>Project</th><th>Slots</th></tr></thead><tbody>%s</tbody></table></section>"
+        '<section aria-labelledby="pp-h"><h2 id="pp-h">Most-preferred projects</h2>'
+        "<table><thead><tr><th>Project</th><th>Favorites</th><th>Ranked by students</th></tr></thead>"
+        "<tbody>%s</tbody></table></section>"
+        '<section aria-labelledby="ps-h"><h2 id="ps-h">Most-preferred students</h2>'
+        "<table><thead><tr><th>Student</th><th>Times ranked by faculty</th></tr></thead>"
+        "<tbody>%s</tbody></table></section>"
+        '<section aria-labelledby="fit-h"><h2 id="fit-h">Fit after matching</h2>%s</section>'
+    ) % (
+        session["id"], len(data["students"]), student_names,
+        len(data["faculty"]), faculty_names,
+        len(data["projects"]), data["total_slots"], proj_rows,
+        pref_proj_rows, pref_stud_rows, fit_section,
+    )
+    return html_response(templates.layout(
+        "Reports", templates.page("Reports for %s" % templates.esc(session["name"]), body), ctx.user))
+
+
+@route("GET", "/sessions/{id}/reports.csv")
+def session_reports_csv(ctx):
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    session, err = _session_or_404(ctx)
+    if err:
+        return err
+    if not db.can_manage_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not manage this session.")
+    data = _report_rows(ctx.conn, session)
+
+    rows = [["Section", "Item", "Value"]]
+    rows.append(["summary", "session", session["name"]])
+    rows.append(["summary", "student_participants", len(data["students"])])
+    rows.append(["summary", "faculty_participants", len(data["faculty"])])
+    rows.append(["summary", "projects", len(data["projects"])])
+    rows.append(["summary", "total_slots", data["total_slots"]])
+    for s in data["students"]:
+        rows.append(["student", "%s %s" % (s["given_name"], s["family_name"]), s["email"]])
+    for f in data["faculty"]:
+        rows.append(["faculty", f["display_name"], f["email"]])
+    for p in data["projects"]:
+        rows.append(["project", p["title"], p["positions"] or 0])
+    for p in data["pref_projects"]:
+        rows.append(["most_preferred_project", p["title"], p["favorites"]])
+    for s in data["pref_students"]:
+        rows.append(["most_preferred_student", s["display_name"], s["times_ranked"]])
+    run = data["run"]
+    if run is not None:
+        rows.append(["fit", "overall_fit", run["overall_fit"]])
+        for m in db.matches_for_run(ctx.conn, run["id"]):
+            if m["status"] in ("rejected", "rematch"):
+                continue
+            rows.append(["student_fit", _user_label(ctx.conn, m["student_id"]), m["student_fit"]])
+
+    payload = export_service.csv(rows)
+    filename = "session-%d-report.csv" % session["id"]
+    resp = Response(status=200, body=payload, content_type="text/csv; charset=utf-8")
+    resp.add_header("Content-Disposition", 'attachment; filename="%s"' % filename)
+    return resp
+
+
+@route("GET", "/admin/sessions")
+def admin_sessions(ctx):
+    """Cross-session status & trends (R10.4). Admin sees all; manager sees own."""
+    guard = require_role(ctx, "admin", "manager")
+    if guard:
+        return guard
+    sessions = db.list_sessions_for_user(ctx.conn, ctx.user)
+    rows = []
+    for s in sessions:
+        students = len(db.session_student_participants(ctx.conn, s["id"]))
+        projects = len(db.list_projects(ctx.conn, s["id"]))
+        run = db.latest_run(ctx.conn, s["id"])
+        fit = _fmt_pct(run["overall_fit"]) if run else "n/a"
+        rows.append(
+            "<tr><td data-label=\"Session\"><a href=\"/sessions/%d\">%s</a></td>"
+            "<td data-label=\"Phase\">%s</td><td data-label=\"Mode\">%s</td>"
+            "<td data-label=\"Students\">%d</td><td data-label=\"Projects\">%d</td>"
+            "<td data-label=\"Overall fit\">%s</td>"
+            "<td data-label=\"Reports\"><a href=\"/sessions/%d/reports\">Reports</a></td></tr>"
+            % (s["id"], templates.esc(s["name"]),
+               templates.esc(PHASE_LABELS.get(s["status"], s["status"])),
+               templates.esc(s["mode"]), students, projects, fit, s["id"]))
+    table = ("<table><thead><tr><th>Session</th><th>Phase</th><th>Mode</th>"
+             "<th>Students</th><th>Projects</th><th>Overall fit</th><th></th></tr></thead>"
+             "<tbody>%s</tbody></table>" % "".join(rows)) if rows else "<p>No sessions visible.</p>"
+    return html_response(templates.layout(
+        "Cross-session status", templates.page("Cross-session status & trends", table), ctx.user))
+
+
+# ---------------------------------------------------------------------------
+# Project export: HTML / print-to-PDF / batch (R3.14)
+# ---------------------------------------------------------------------------
+
+def _load_viewable_project(ctx, pid):
+    """Return (project, session, None) if viewable, else (None, None, resp)."""
+    project = db.get_project(ctx.conn, pid) if pid else None
+    if project is None:
+        return None, None, not_found("Project not found.")
+    session = db.get_session(ctx.conn, project["session_id"])
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return None, None, forbidden("You do not have access to this project.")
+    # Draft projects are only viewable by their editors / managers.
+    if project["status"] != "published" and not _can_edit_project(ctx, project):
+        return None, None, forbidden("This project is not available.")
+    return project, session, None
+
+
+def _department_name(conn, project):
+    dept_id = project["primary_department_id"]
+    if not dept_id:
+        return None
+    row = conn.execute("SELECT name FROM departments WHERE id = ?", (dept_id,)).fetchone()
+    return row["name"] if row else None
+
+
+@route("GET", "/projects/{id}/export.html")
+def project_export_html(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    pid = fint_param(ctx, "id")
+    project, _session, resp = _load_viewable_project(ctx, pid)
+    if resp:
+        return resp
+    mentors = db.project_mentors(ctx.conn, project["id"])
+    dept = _department_name(ctx.conn, project)
+    html = export_service.project_html(project, mentors=mentors, department=dept)
+    return Response(status=200, body=html)
+
+
+@route("GET", "/projects/{id}/export.pdf")
+def project_export_pdf(ctx):
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    pid = fint_param(ctx, "id")
+    project, _session, resp = _load_viewable_project(ctx, pid)
+    if resp:
+        return resp
+    mentors = db.project_mentors(ctx.conn, project["id"])
+    dept = _department_name(ctx.conn, project)
+    # Served as HTML for the browser to print to PDF (no PDF lib offline).
+    html = export_service.project_pdf(project, mentors=mentors, department=dept)
+    return Response(status=200, body=html)
+
+
+@route("GET", "/projects/export")
+def project_export_batch(ctx):
+    """Batch export for a faculty with multiple projects: ?ids=1,2 or all mine."""
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    ids_raw = fv(ctx.query, "ids")
+    wanted = [int(x) for x in ids_raw.split(",") if x.strip().isdigit()] if ids_raw else None
+    sections = []
+    exported = 0
+    for pid in (wanted or _my_project_ids(ctx)):
+        project, _session, resp = _load_viewable_project(ctx, pid)
+        if resp:
+            continue
+        if not _can_edit_project(ctx, project):
+            continue
+        mentors = db.project_mentors(ctx.conn, project["id"])
+        dept = _department_name(ctx.conn, project)
+        inner = export_service._project_body(project, mentors=mentors, department=dept)
+        sections.append('<article class="export-card">%s</article>' % inner)
+        exported += 1
+    if exported == 0:
+        return not_found("No projects available to export.")
+    body = (
+        '<p class="no-print"><button onclick="window.print()">Print / Save as PDF</button></p>'
+        "%s" % "".join(sections))
+    return html_response(templates.layout(
+        "Batch project export", templates.page("Batch project export (%d)" % exported, body), ctx.user))
+
+
+def _my_project_ids(ctx):
+    """Project ids the current user mentors, across all sessions they can see."""
+    ids = []
+    for session in db.list_sessions(ctx.conn):
+        if not db.can_view_session(ctx.conn, session, ctx.user):
+            continue
+        for p in db.list_projects(ctx.conn, session["id"]):
+            if db.is_project_mentor(ctx.conn, p["id"], ctx.user["id"]):
+                ids.append(p["id"])
+    return ids
+
+
+# ---------------------------------------------------------------------------
+# Calendar reminders ICS (R9.2)
+# ---------------------------------------------------------------------------
+
+def _session_reminder_events(session):
+    """Build ICS event dicts from a session's per-phase deadlines."""
+    events = []
+    for key, col in DEADLINE_COLUMNS.items():
+        iso = session[col]
+        if not iso:
+            continue
+        try:
+            start = datetime.fromisoformat(iso)
+        except ValueError:
+            continue
+        label = key.replace("_", " ").title()
+        events.append({
+            "uid": "spark-session-%d-%s@spark" % (session["id"], key),
+            "start": start,
+            "summary": "%s deadline: %s" % (label, session["name"]),
+            "description": "SPARK %s deadline for session '%s'." % (label, session["name"]),
+        })
+    return events
+
+
+@route("GET", "/reminders.ics")
+def reminders_ics(ctx):
+    """Opt-in download of per-phase deadline reminders for a session."""
+    guard = require_login(ctx)
+    if guard:
+        return guard
+    sid = fint(ctx.query, "session_id")
+    session = db.get_session(ctx.conn, sid) if sid else None
+    if session is None:
+        return not_found("Session not found.")
+    if not db.can_view_session(ctx.conn, session, ctx.user):
+        return forbidden("You do not have access to this session.")
+    events = _session_reminder_events(session)
+    payload = ics_service.build_ics(events)
+    resp = Response(status=200, body=payload, content_type="text/calendar; charset=utf-8")
+    resp.add_header("Content-Disposition",
+                    'attachment; filename="spark-session-%d-reminders.ics"' % session["id"])
+    return resp
+
+
+# ---------------------------------------------------------------------------
+# CyHire forward (R11.1)
+# ---------------------------------------------------------------------------
+
+@route("POST", "/projects/{id}/cyhire")
+def project_cyhire_forward(ctx):
+    """Forward an unfilled opening to CyHire. Allowed only when the session has
+    ended (closed) and the project still has unfilled openings."""
+    guard = require_role(ctx, "faculty", "admin", "manager")
+    if guard:
+        return guard
+    csrf_err = check_csrf(ctx)
+    if csrf_err:
+        return csrf_err
+    pid = fint_param(ctx, "id")
+    project = db.get_project(ctx.conn, pid) if pid else None
+    if project is None:
+        return not_found("Project not found.")
+    session = db.get_session(ctx.conn, project["session_id"])
+    if not (_can_edit_project(ctx, project) or db.can_manage_session(ctx.conn, session, ctx.user)):
+        return forbidden("You cannot forward this project.")
+    if session["status"] != "closed":
+        return forbidden("CyHire forwarding is available only after the session has ended.")
+    openings = _remaining_capacity(ctx.conn, session["id"], project)
+    if openings <= 0:
+        return forbidden("This project has no unfilled openings to forward.")
+    cyhire_service.forward(ctx.conn, project, openings=openings)
+    ctx.conn.commit()
+    return redirect("/projects/%d" % project["id"])
 
 
 # ---------------------------------------------------------------------------

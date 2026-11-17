@@ -291,9 +291,22 @@ CREATE TABLE IF NOT EXISTS notifications (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     kind        TEXT NOT NULL,
+    channel     TEXT NOT NULL DEFAULT 'inapp', -- 'email'|'sms'|'ics'|'inapp' (R9.1)
     subject     TEXT NOT NULL DEFAULT '',
     body        TEXT NOT NULL DEFAULT '',
     is_read     INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL
+);
+
+-- Outbound integration log (CyHire / 12twenty forwards, R11.1). Records the
+-- JSON payload we would POST to the external system; no live network call.
+CREATE TABLE IF NOT EXISTS integration_events (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    target      TEXT NOT NULL,            -- 'cyhire'
+    session_id  INTEGER REFERENCES match_sessions(id) ON DELETE SET NULL,
+    project_id  INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    status      TEXT NOT NULL DEFAULT 'recorded',
+    payload_json TEXT NOT NULL DEFAULT '{}',
     created_at  TEXT NOT NULL
 );
 
@@ -965,3 +978,170 @@ def ensure_contract(conn, match_id):
 
 def update_contract(conn, contract_id, **cols):
     _update_row(conn, "contracts", "id", contract_id, cols)
+
+
+# ---------------------------------------------------------------------------
+# Notifications / inbox (R9.1, R9.3)
+# ---------------------------------------------------------------------------
+
+def create_notification(conn, user_id, kind, channel="inapp", subject="", body=""):
+    """Persist a notification row and return its id."""
+    return insert(
+        conn, "notifications",
+        user_id=user_id, kind=kind, channel=channel,
+        subject=subject, body=body, is_read=0,
+    )
+
+
+def list_notifications(conn, user_id, unread_only=False):
+    """Notifications for a user, newest first."""
+    if unread_only:
+        return conn.execute(
+            "SELECT * FROM notifications WHERE user_id = ? AND is_read = 0 "
+            "ORDER BY id DESC",
+            (user_id,),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM notifications WHERE user_id = ? ORDER BY id DESC",
+        (user_id,),
+    ).fetchall()
+
+
+def unread_notification_count(conn, user_id):
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM notifications WHERE user_id = ? AND is_read = 0",
+        (user_id,),
+    ).fetchone()
+    return row["n"]
+
+
+def mark_notification_read(conn, notification_id, user_id):
+    """Mark one notification read, scoped to its owner."""
+    conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?",
+        (notification_id, user_id),
+    )
+
+
+def mark_all_notifications_read(conn, user_id):
+    conn.execute(
+        "UPDATE notifications SET is_read = 1 WHERE user_id = ?", (user_id,)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Ratings (R12.1)
+# ---------------------------------------------------------------------------
+
+def add_rating(conn, session_id, rater_id, subject_id, stars, comment=""):
+    """Insert a rating of a subject user (faculty) by a rater."""
+    return insert(
+        conn, "ratings", session_id=session_id, rater_id=rater_id,
+        subject_id=subject_id, stars=stars, comment=comment, updated_at=utcnow(),
+    )
+
+
+def rating_summary_for_subject(conn, subject_id):
+    """Return (average_stars, rater_count) across all sessions for a subject.
+
+    Counts distinct raters so repeated ratings by one person don't inflate the
+    threshold used by the show-ratings display rule.
+    """
+    row = conn.execute(
+        "SELECT AVG(stars) AS avg_stars, COUNT(DISTINCT rater_id) AS raters "
+        "FROM ratings WHERE subject_id = ?",
+        (subject_id,),
+    ).fetchone()
+    avg = row["avg_stars"]
+    return (float(avg) if avg is not None else None), (row["raters"] or 0)
+
+
+def project_rating_summary(conn, project_id):
+    """Average rating + rater count for a project, aggregated over its mentors.
+
+    A project's rating is the pooled rating of its mentors (the faculty running
+    it), so a project with enough rated mentors can surface an average.
+    """
+    row = conn.execute(
+        "SELECT AVG(r.stars) AS avg_stars, COUNT(DISTINCT r.rater_id) AS raters "
+        "FROM ratings r WHERE r.subject_id IN "
+        "(SELECT user_id FROM project_mentors WHERE project_id = ?)",
+        (project_id,),
+    ).fetchone()
+    avg = row["avg_stars"]
+    return (float(avg) if avg is not None else None), (row["raters"] or 0)
+
+
+# ---------------------------------------------------------------------------
+# Integration events (CyHire forward, R11.1)
+# ---------------------------------------------------------------------------
+
+def record_integration_event(conn, target, payload_json, session_id=None,
+                             project_id=None, status="recorded"):
+    return insert(
+        conn, "integration_events", target=target, payload_json=payload_json,
+        session_id=session_id, project_id=project_id, status=status,
+    )
+
+
+def list_integration_events(conn, target=None):
+    if target is None:
+        return conn.execute(
+            "SELECT * FROM integration_events ORDER BY id DESC"
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM integration_events WHERE target = ? ORDER BY id DESC",
+        (target,),
+    ).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Reporting helpers (R10)
+# ---------------------------------------------------------------------------
+
+def session_student_participants(conn, session_id):
+    """Distinct students who submitted a profile in the session (rows with names)."""
+    return conn.execute(
+        "SELECT sp.user_id, sp.given_name, sp.family_name, u.display_name, u.email "
+        "FROM student_profiles sp JOIN users u ON u.id = sp.user_id "
+        "WHERE sp.session_id = ? AND sp.submitted = 1 "
+        "ORDER BY sp.family_name, sp.given_name",
+        (session_id,),
+    ).fetchall()
+
+
+def session_faculty_participants(conn, session_id):
+    """Distinct faculty with at least one project (any status) in the session."""
+    return conn.execute(
+        "SELECT DISTINCT u.id AS user_id, u.display_name, u.email "
+        "FROM project_mentors pm "
+        "JOIN projects p ON p.id = pm.project_id "
+        "JOIN users u ON u.id = pm.user_id "
+        "WHERE p.session_id = ? ORDER BY u.display_name",
+        (session_id,),
+    ).fetchall()
+
+
+def most_preferred_projects(conn, session_id, limit=5):
+    """Projects ranked by how many students favorited them, plus pref count."""
+    return conn.execute(
+        "SELECT p.id, p.title, "
+        "(SELECT COUNT(*) FROM favorites f WHERE f.project_id = p.id) AS favorites, "
+        "(SELECT COUNT(*) FROM preferences pr WHERE pr.project_id = p.id "
+        " AND pr.actor_role = 'student') AS prefs "
+        "FROM projects p WHERE p.session_id = ? "
+        "ORDER BY favorites DESC, prefs DESC, p.title LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
+
+
+def most_preferred_students(conn, session_id, limit=5):
+    """Students ranked by how many projects (faculty) ranked them."""
+    return conn.execute(
+        "SELECT u.id AS user_id, u.display_name, "
+        "COUNT(*) AS times_ranked "
+        "FROM preferences pr JOIN users u ON u.id = pr.student_id "
+        "WHERE pr.session_id = ? AND pr.actor_role = 'project' "
+        "GROUP BY pr.student_id ORDER BY times_ranked DESC, u.display_name LIMIT ?",
+        (session_id, limit),
+    ).fetchall()
