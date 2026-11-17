@@ -1437,9 +1437,10 @@ def _profile_major_checkboxes(conn, values):
             for k in ("", "major", "secondary", "minor")
         )
         parts.append(
-            '<label class="major-row">%s '
-            '<select name="major_kind_%d">%s</select></label>'
-            % (templates.esc(r["name"]), r["id"], opts)
+            '<span class="major-row">'
+            '<label for="f-major_kind_%d">%s</label> '
+            '<select id="f-major_kind_%d" name="major_kind_%d">%s</select></span>'
+            % (r["id"], templates.esc(r["name"]), r["id"], r["id"], opts)
         )
     return '<div class="checkgroup">%s</div>' % "".join(parts)
 
@@ -2983,7 +2984,7 @@ def project_export_batch(ctx):
             continue
         mentors = db.project_mentors(ctx.conn, project["id"])
         dept = _department_name(ctx.conn, project)
-        inner = export_service._project_body(project, mentors=mentors, department=dept)
+        inner = export_service._project_body(project, mentors=mentors, department=dept, base_level=2)
         sections.append('<article class="export-card">%s</article>' % inner)
         exported += 1
     if exported == 0:

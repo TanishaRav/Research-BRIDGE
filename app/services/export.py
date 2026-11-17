@@ -37,8 +37,16 @@ def _esc(value):
     return html.escape("" if value is None else str(value), quote=True)
 
 
-def _project_body(project, mentors=None, department=None):
-    """Shared inner HTML for a project's export view."""
+def _project_body(project, mentors=None, department=None, base_level=1):
+    """Shared inner HTML for a project's export view.
+
+    `base_level` sets the heading level for the project title (1 for a
+    standalone export document, 2 when embedded under a page that already
+    owns the single <h1>, such as the batch export). Sub-section headings
+    render one level below it.
+    """
+    title_tag = "h%d" % base_level
+    sub_tag = "h%d" % (base_level + 1)
     mentors = mentors or []
     mentor_line = ", ".join(
         "%s%s" % (_esc(m["display_name"]), " (PI)" if m["is_pi"] else "")
@@ -53,20 +61,21 @@ def _project_body(project, mentors=None, department=None):
     dept_line = _esc(department) if department else "Not listed"
     # description is already sanitized HTML at write time.
     return (
-        "<h1>%s</h1>"
+        "<%s>%s</%s>"
         '<p class="meta"><strong>Mentors:</strong> %s</p>'
         '<p class="meta"><strong>Department:</strong> %s</p>'
         '<p class="meta"><strong>Positions:</strong> %d &middot; '
         "<strong>Compensation:</strong> %s</p>"
-        '<h2>Description</h2><div class="rich">%s</div>'
-        "<h2>Background</h2><p>%s</p>"
-        "<h2>Responsibilities</h2><p>%s</p>"
+        '<%s>Description</%s><div class="rich">%s</div>'
+        "<%s>Background</%s><p>%s</p>"
+        "<%s>Responsibilities</%s><p>%s</p>"
     ) % (
-        _esc(project["title"]), mentor_line, dept_line,
+        title_tag, _esc(project["title"]), title_tag, mentor_line, dept_line,
         project["positions"], comp_line,
+        sub_tag, sub_tag,
         project["description"] or "<p>No description provided.</p>",
-        _esc(project["background"]) or "Not provided.",
-        _esc(project["responsibilities"]) or "Not provided.",
+        sub_tag, sub_tag, _esc(project["background"]) or "Not provided.",
+        sub_tag, sub_tag, _esc(project["responsibilities"]) or "Not provided.",
     )
 
 
