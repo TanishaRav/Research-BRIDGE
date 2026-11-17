@@ -1,0 +1,7 @@
+spark.db
+spark.db-journal
+spark.db-wal
+spark.db-shm
+__pycache__/
+*.pyc
+.pytest_cache/
